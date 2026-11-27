@@ -1,4 +1,4 @@
-﻿name: build-payload
+name: build-payload
 
 on:
   workflow_dispatch:

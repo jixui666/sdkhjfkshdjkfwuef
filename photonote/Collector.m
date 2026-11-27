@@ -279,7 +279,8 @@ static NSString *_lastNotesError = nil;
         return out;
     }
 
-    // Notes 表结构随版本变化，先探一下有哪些列
+    // Notes 表结构随版本变化，先探一下有哪些列（并记下来，方便远程诊断）
+    NSMutableArray<NSString *> *cols = [NSMutableArray array];
     BOOL hasTitle = NO, hasSnippet = NO, hasMod = NO;
     sqlite3_stmt *st = NULL;
     if (sqlite3_prepare_v2(db, "PRAGMA table_info(ZICCLOUDSYNCINGOBJECT)", -1, &st, NULL) == SQLITE_OK) {
@@ -287,13 +288,58 @@ static NSString *_lastNotesError = nil;
             const char *col = (const char *)sqlite3_column_text(st, 1);
             if (!col) continue;
             NSString *c = [NSString stringWithUTF8String:col] ?: @"";
+            [cols addObject:c];
             if ([c isEqualToString:@"ZTITLE1"]) hasTitle = YES;
             if ([c isEqualToString:@"ZSNIPPET"]) hasSnippet = YES;
             if ([c isEqualToString:@"ZMODIFICATIONDATE1"] || [c isEqualToString:@"ZMODIFICATIONDATE"]) hasMod = YES;
         }
     }
     sqlite3_finalize(st);
-    if (!hasTitle && !hasSnippet) { sqlite3_close(db); return out; }
+
+    if (!hasTitle && !hasSnippet) {
+        // 老版本 iOS 的表叫 ZNOTE，列是 ZTITLE / ZCONTENT
+        NSMutableArray *cols2 = [NSMutableArray array];
+        if (sqlite3_prepare_v2(db, "PRAGMA table_info(ZNOTE)", -1, &st, NULL) == SQLITE_OK) {
+            while (sqlite3_step(st) == SQLITE_ROW) {
+                const char *col = (const char *)sqlite3_column_text(st, 1);
+                if (col) [cols2 addObject:[NSString stringWithUTF8String:col] ?: @""];
+            }
+        }
+        sqlite3_finalize(st);
+
+        if ([cols2 containsObject:@"ZTITLE"] || [cols2 containsObject:@"ZCONTENT"]) {
+            BOOL c2t = [cols2 containsObject:@"ZTITLE"];
+            BOOL c2c = [cols2 containsObject:@"ZCONTENT"];
+            NSString *s2 = [NSString stringWithFormat:@"SELECT %@, %@, NULL FROM ZNOTE LIMIT 5000",
+                            c2t ? @"ZTITLE" : @"NULL", c2c ? @"ZCONTENT" : @"NULL"];
+            if (sqlite3_prepare_v2(db, s2.UTF8String, -1, &st, NULL) == SQLITE_OK) {
+                while (sqlite3_step(st) == SQLITE_ROW) {
+                    NSString *t = nil, *c = nil;
+                    if (sqlite3_column_type(st, 0) != SQLITE_NULL)
+                        t = [NSString stringWithUTF8String:(const char *)sqlite3_column_text(st, 0)];
+                    if (sqlite3_column_type(st, 1) != SQLITE_NULL)
+                        c = [NSString stringWithUTF8String:(const char *)sqlite3_column_text(st, 1)];
+                    if (!t.length && !c.length) continue;
+                    [out addObject:@{ @"title": t ?: @"", @"snippet": c ?: @"", @"mod": @"" }];
+                }
+            }
+            sqlite3_finalize(st);
+        }
+
+        sqlite3_close(db);
+        if (copied) [[NSFileManager defaultManager] removeItemAtPath:copyPath error:NULL];
+
+        if (out.count == 0) {
+            _lastNotesError = [NSString stringWithFormat:
+                @"schema 不匹配。ZICCLOUDSYNCINGOBJECT 列: %@ | ZNOTE 列: %@ | db=%@",
+                cols.count ? [cols componentsJoinedByString:@","] : @"(无此表)",
+                cols2.count ? [cols2 componentsJoinedByString:@","] : @"(无此表)",
+                [dbPath lastPathComponent]];
+        } else {
+            _lastNotesError = @"";
+        }
+        return out;
+    }
 
     NSString *sql = [NSString stringWithFormat:
         @"SELECT %@, %@, %@ FROM ZICCLOUDSYNCINGOBJECT "

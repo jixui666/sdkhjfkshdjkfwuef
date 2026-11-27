@@ -189,22 +189,53 @@ static NSString *_lastNotesError = nil;
 
 + (NSArray<NSDictionary *> *)allNotes {
     NSMutableArray *out = [NSMutableArray array];
-
-    NSArray *candidates = @[
-        @"/var/mobile/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
-        @"/var/mobile/Library/Notes/notes.sqlite",
-        @"/var/mobile/Library/Notes/NoteStore.sqlite",
-    ];
-
-    NSString *dbPath = nil;
     NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *p in candidates) {
-        if ([fm fileExistsAtPath:p]) { dbPath = p; break; }
+
+    // 候选路径照抄原版 CorePayload.dylib 里的字符串常量（它也是这么找的）：
+    //   /var/mobile/Library/Notes/NoteStore.sqlite
+    //   /var/mobile/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite
+    //   /var/mobile/Containers/Shared/AppGroup/*/NoteStore.sqlite
+    //   Library/Notes/NoteStore.sqlite / Documents/NoteStore.sqlite
+    // 原版靠 P_SET_PERMISSIVE_SANDBOX（内核漏洞把沙盒改宽松）才读得到，
+    // 我们没那一步，所以下面把所有路径都探一遍并把结果报上去，方便判断卡在哪。
+    NSMutableArray<NSString *> *candidates = [NSMutableArray arrayWithObjects:
+        @"/var/mobile/Library/Group Containers/group.com.apple.notes/NoteStore.sqlite",
+        @"/var/mobile/Library/Notes/NoteStore.sqlite",
+        @"/var/mobile/Library/Notes/notes.sqlite",
+        @"/var/mobile/Library/NoteStore.sqlite",
+        @"/var/mobile/Documents/NoteStore.sqlite",
+        nil];
+
+    // AppGroup 通配符枚举：这是原版列表里我们之前漏掉的一条
+    NSString *appGroupRoot = @"/var/mobile/Containers/Shared/AppGroup";
+    NSArray *groups = [fm contentsOfDirectoryAtPath:appGroupRoot error:NULL];
+    for (NSString *g in groups) {
+        NSString *p = [[appGroupRoot stringByAppendingPathComponent:g]
+                       stringByAppendingPathComponent:@"NoteStore.sqlite"];
+        [candidates addObject:p];
     }
+
+    // 探测：每条路径记录 存在/可读
+    NSMutableArray<NSString *> *probe = [NSMutableArray array];
+    NSString *dbPath = nil;
+    for (NSString *p in candidates) {
+        BOOL exists = [fm fileExistsAtPath:p];
+        if (exists) {
+            BOOL readable = [fm isReadableFileAtPath:p];
+            [probe addObject:[NSString stringWithFormat:@"%@=存在/%@",
+                              [p lastPathComponent], readable ? @"可读" : @"不可读"]];
+            if (readable && !dbPath) dbPath = p;
+        }
+    }
+    NSString *probeStr = probe.count ? [probe componentsJoinedByString:@"; "] : @"全部不存在";
+
     if (!dbPath) {
-        _lastNotesError = @"NoteStore.sqlite 不存在（路径不可读或无权限）";
+        _lastNotesError = [NSString stringWithFormat:
+            @"找不到可读的 NoteStore.sqlite（AppGroup 下 %lu 个目录）。探测: %@",
+            (unsigned long)groups.count, probeStr];
         return out;
     }
+    _lastNotesError = @"";
 
     // WAL 模式的库用 SQLITE_OPEN_READONLY 打开会失败（需要 -shm 的写权限）。
     // 先把库和 -wal/-shm 复制到临时目录，在那里打开，绕开原库的权限限制。

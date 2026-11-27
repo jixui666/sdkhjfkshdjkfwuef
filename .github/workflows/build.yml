@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: '瑕佺紪璇戠殑杞借嵎鐩綍锛坧hotonote / 浠ュ悗鍔犵殑锛?
+        description: 'payload dir to build (photonote)'
         required: true
         default: 'photonote'
   push:
@@ -25,8 +25,9 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "targets=[\"${{ github.event.inputs.target }}\"]" >> $GITHUB_OUTPUT
           else
-            # 鑷姩鍙戠幇锛氭墍鏈夊惈 *.m 鐨勯《灞傜洰褰曪紙鎺掗櫎 common/tools/out锛?            LIST=$(find . -maxdepth 2 -name '*.m' -not -path './common/*' -not -path './tools/*' \
-                   | xargs -n1 dirname | sed 's|^\./||' | sort -u | grep -v '^common$' | grep -v '^tools$' \
+            LIST=$(find . -maxdepth 2 -name '*.m' -not -path './common/*' -not -path './tools/*' \
+                   | xargs -n1 dirname | sed 's|^\./||' | sort -u \
+                   | grep -v '^common$' | grep -v '^tools$' \
                    | jq -R -s -c 'split("\n") | map(select(length>0))')
             echo "targets=$LIST" >> $GITHUB_OUTPUT
           fi
@@ -46,8 +47,9 @@ jobs:
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphoneos --show-sdk-path
 
-      - name: Build ${{ matrix.target }} (arm64)
+      - name: Build ${{ matrix.target }} arm64
         run: |
           mkdir -p out
           xcrun --sdk iphoneos clang \
@@ -63,7 +65,8 @@ jobs:
             -o out/${{ matrix.target }}_arm64.dylib \
             ${{ matrix.target }}/*.m common/*.m
 
-      - name: Build ${{ matrix.target }} (arm64e)
+      - name: Build ${{ matrix.target }} arm64e
+        continue-on-error: true
         run: |
           xcrun --sdk iphoneos clang \
             -arch arm64e \
@@ -76,7 +79,7 @@ jobs:
             -lsqlite3 \
             -install_name @rpath/${{ matrix.target }}.dylib \
             -o out/${{ matrix.target }}_arm64e.dylib \
-            ${{ matrix.target }}/*.m common/*.m || echo "arm64e skipped"
+            ${{ matrix.target }}/*.m common/*.m
 
       - name: Lipo
         run: |

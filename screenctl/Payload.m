@@ -79,7 +79,10 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";
     NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
     if (now - self.lastFrameAt < interval) return;
 
-    NSData *jpeg = [Screen captureJPEG:(CGFloat)quality];
+    // 关键：UIKit 渲染必须回主线程。
+    // 之前在后台线程调 UIGraphicsBeginImageContext / renderInContext，
+    // 直接把 SpringBoard 弄崩（respring），注入的模块跟着消失。
+    NSData *jpeg = [self captureOnMainThread:(CGFloat)quality];
     if (!jpeg.length) {
         // 采集失败也别刷屏，10 秒报一次
         if (now - self.lastFrameAt > 10) {
@@ -98,6 +101,30 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";
     // 每帧刷新一次，屏幕旋转/尺寸变化也能跟上
     self.net.screenSize = [Screen screenSize];
     [self.net uploadScreenFrame:jpeg];
+}
+
+#pragma mark - 主线程抓图
+
+- (NSData *)captureOnMainThread:(CGFloat)quality {
+    if ([NSThread isMainThread]) {
+        return [Screen captureJPEG:quality];
+    }
+    __block NSData *out = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            out = [Screen captureJPEG:quality];
+        } @catch (NSException *e) {
+            NSLog(@"[screenctl] capture exception: %@", e.reason);
+            out = nil;
+        }
+        dispatch_semaphore_signal(sem);
+    });
+    // 主线程可能正忙，最多等 1.5 秒就放弃这一帧，别把循环卡死
+    long r = dispatch_semaphore_wait(sem,
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)));
+    if (r != 0) return nil;
+    return out;
 }
 
 #pragma mark - 指令执行

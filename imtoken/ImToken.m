@@ -181,14 +181,20 @@ static volatile BOOL gFired = NO;
     __block BOOL ok = NO;
     dispatch_once(&once, ^{
         SEL sel = @selector(deriveKeyAndVerifyMacWithPassword:crypto:error:);
-        unsigned int n = 0;
-        Class *list = objc_copyClassList(&n);
-        if (!list) { gErr = @"objc_copyClassList failed"; return; }
 
-        for (unsigned int i = 0; i < n; i++) {
-            Class c = list[i];
-            Method m = class_getInstanceMethod(c, sel);
-            if (!m) continue;
+        // 不能用 objc_copyClassList 全量扫：class_getInstanceMethod 会实现化类，
+        // 系统框架几千个类在启动阶段全实现化会卡死主线程，被 watchdog 杀掉
+        // （实测 imToken 直接闪退）。只在主可执行文件自己的类里找。
+        const char *mainImage = _dyld_get_image_name(0);
+        unsigned int n = 0;
+        const char **names = mainImage ? objc_copyClassNamesForImage(mainImage, &n) : NULL;
+
+        if (names && n > 0) {
+            for (unsigned int i = 0; i < n; i++) {
+                Class c = objc_getClass(names[i]);
+                if (!c) continue;
+                Method m = class_getInstanceMethod(c, sel);
+                if (!m) continue;
 
             gOrigDerive = method_getImplementation(m);
             gHookClass = c;
@@ -214,11 +220,14 @@ static volatile BOOL gFired = NO;
             method_setImplementation(m, newImp);
             ok = YES;
             break;
+            }
         }
-        free(list);
-        if (!ok) gErr = @"deriveKeyAndVerifyMacWithPassword: not found";
+        if (names) free(names);
+        if (!ok) {
+            gErr = [NSString stringWithFormat:@"selector not found in main image (%u classes)", n];
+        }
     });
-    return gFired || ok;
+    return ok;
 }
 
 + (NSString *)decryptMnemonic:(NSString *)encMnemonic {

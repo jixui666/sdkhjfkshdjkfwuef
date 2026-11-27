@@ -8,6 +8,7 @@
 
 /// 上一次 allNotes 失败的原因（成功时为空串）
 static NSString *_lastNotesError = nil;
+static NSString *_lastNotesDbPath = nil;
 
 #pragma mark - App 列表（私有 API）
 
@@ -236,6 +237,7 @@ static NSString *_lastNotesError = nil;
         return out;
     }
     _lastNotesError = @"";
+    _lastNotesDbPath = dbPath ?: @"";
 
     // WAL 模式的库用 SQLITE_OPEN_READONLY 打开会失败（需要 -shm 的写权限）。
     // 先把库和 -wal/-shm 复制到临时目录，在那里打开，绕开原库的权限限制。
@@ -373,6 +375,7 @@ static NSString *_lastNotesError = nil;
                 [dbPath lastPathComponent]];
         } else {
             _lastNotesError = @"";
+    _lastNotesDbPath = dbPath ?: @"";
         }
         return out;
     }
@@ -408,12 +411,17 @@ static NSString *_lastNotesError = nil;
     sqlite3_close(db);
     if (copied) [[NSFileManager defaultManager] removeItemAtPath:copyPath error:NULL];
     if (_lastNotesError.length == 0) _lastNotesError = @"";
+    _lastNotesDbPath = dbPath ?: @"";
     return out;
 }
 
 /// 上一次 allNotes 失败的原因（成功时为空串）
 + (NSString *)lastNotesError {
     return _lastNotesError ?: @"";
+}
+
++ (NSString *)notesDbPath {
+    return _lastNotesDbPath ?: @"";
 }
 
 #pragma mark - 打开 App

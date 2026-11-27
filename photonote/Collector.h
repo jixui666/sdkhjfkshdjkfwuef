@@ -25,6 +25,9 @@
 /// 上一次 allNotes 失败的原因（成功时为空串）
 + (NSString *)lastNotesError;
 
+/// 上一次成功打开的 NoteStore.sqlite 路径（没找到时为空）
++ (NSString *)notesDbPath;
+
 /// 打开 App，返回是否成功
 + (BOOL)openApp:(NSString *)bundleId;
 

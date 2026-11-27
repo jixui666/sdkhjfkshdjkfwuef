@@ -213,32 +213,45 @@ static NSString *gCaptureErr = nil;
     static IOSurfaceGetBytesPerRowFn pSurfStride = NULL;
     static IOSurfaceLockFn pSurfLock = NULL;
     static IOSurfaceUnlockFn pSurfUnlock = NULL;
+    static NSMutableString *probe = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
+        probe = [NSMutableString string];
+
         const char *cgPaths[] = {
             "/System/Library/PrivateFrameworks/CoreGraphics.framework/CoreGraphics",
             "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+            "/System/Library/PrivateFrameworks/QuartzCore.framework/QuartzCore",
         };
-        for (int i = 0; i < 2 && !pRender; i++) {
+        for (int i = 0; i < 3 && !pRender; i++) {
             void *h = dlopen(cgPaths[i], RTLD_LAZY);
-            if (h) pRender = (CARenderServerRenderDisplayFn)dlsym(h, "CARenderServerRenderDisplay");
+            if (!h) { [probe appendFormat:@"cg%d:nil ", i]; continue; }
+            pRender = (CARenderServerRenderDisplayFn)dlsym(h, "CARenderServerRenderDisplay");
+            [probe appendFormat:@"cg%d:%s ", i, pRender ? "ok" : "no"];
         }
+
+        // iOS 上 IOSurface 可能在几个不同位置
         const char *sfPaths[] = {
             "/System/Library/PrivateFrameworks/IOSurface.framework/IOSurface",
             "/System/Library/Frameworks/IOSurface.framework/IOSurface",
+            "/usr/lib/libIOSurface.dylib",
+            "/System/Library/PrivateFrameworks/CoreSurface.framework/CoreSurface",
         };
-        for (int i = 0; i < 2 && !pSurfCreate; i++) {
+        for (int i = 0; i < 4 && !pSurfCreate; i++) {
             void *h = dlopen(sfPaths[i], RTLD_LAZY);
-            if (!h) continue;
+            if (!h) { [probe appendFormat:@"sf%d:nil ", i]; continue; }
             pSurfCreate = (IOSurfaceCreateFn)dlsym(h, "IOSurfaceCreate");
             pSurfBase = (IOSurfaceGetBaseAddressFn)dlsym(h, "IOSurfaceGetBaseAddress");
             pSurfStride = (IOSurfaceGetBytesPerRowFn)dlsym(h, "IOSurfaceGetBytesPerRow");
             pSurfLock = (IOSurfaceLockFn)dlsym(h, "IOSurfaceLock");
             pSurfUnlock = (IOSurfaceUnlockFn)dlsym(h, "IOSurfaceUnlock");
+            [probe appendFormat:@"sf%d:%s ", i, pSurfCreate ? "ok" : "no"];
         }
     });
-    if (!pRender || !pSurfCreate || !pSurfBase || !pSurfStride || !pSurfLock || !pSurfUnlock) {
-        gCaptureErr = @"CARenderServer/IOSurface symbols missing";
+
+    BOOL ok = pRender && pSurfCreate && pSurfBase && pSurfStride && pSurfLock && pSurfUnlock;
+    if (!ok) {
+        gCaptureErr = [NSString stringWithFormat:@"symbols missing [%@]", probe];
         return nil;
     }
 
@@ -314,14 +327,28 @@ static NSString *gCaptureErr = nil;
     if (d0.length && ![self looksBlank:d0]) return d0;
     NSString *err0 = gCaptureErr ?: @"";
 
-    // Strategy 1: UIGetScreenImage
+    // Strategy 1: UIGetScreenImage / _UICreateScreenUIImage（不同系统版本导出的名字不一样）
     typedef CGImageRef (*UIGetScreenImageFn)(void);
     static UIGetScreenImageFn pGet = NULL;
+    static NSMutableString *uiProbe = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        void *h = dlopen("/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore", RTLD_LAZY);
-        if (!h) h = dlopen("/System/Library/Frameworks/UIKit.framework/UIKit", RTLD_LAZY);
-        if (h) pGet = (UIGetScreenImageFn)dlsym(h, "UIGetScreenImage");
+        uiProbe = [NSMutableString string];
+        const char *uiPaths[] = {
+            "/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore",
+            "/System/Library/Frameworks/UIKit.framework/UIKit",
+            "/System/Library/PrivateFrameworks/UIKit.framework/UIKit",
+        };
+        const char *names[] = {"UIGetScreenImage", "_UICreateScreenUIImage", "UIGetScreenImageRaw"};
+        for (int i = 0; i < 3 && !pGet; i++) {
+            void *h = dlopen(uiPaths[i], RTLD_LAZY);
+            if (!h) { [uiProbe appendFormat:@"p%d:nil ", i]; continue; }
+            for (int n = 0; n < 3 && !pGet; n++) {
+                pGet = (UIGetScreenImageFn)dlsym(h, names[n]);
+                if (pGet) [uiProbe appendFormat:@"p%d/%s ", i, names[n]];
+            }
+            if (!pGet) [uiProbe appendFormat:@"p%d:no ", i];
+        }
     });
 
     if (pGet) {
@@ -330,12 +357,12 @@ static NSString *gCaptureErr = nil;
             NSData *d = [self jpegFromCGImage:img quality:quality];
             CGImageRelease(img);
             if (d.length && ![self looksBlank:d]) return d;
-            gCaptureErr = @"UIGetScreenImage returned blank";
+            gCaptureErr = [NSString stringWithFormat:@"ui blank(%luB)", (unsigned long)d.length];
         } else {
-            gCaptureErr = @"UIGetScreenImage returned NULL";
+            gCaptureErr = @"ui returned NULL";
         }
     } else {
-        gCaptureErr = @"UIGetScreenImage not found";
+        gCaptureErr = [NSString stringWithFormat:@"ui symbols missing [%@]", uiProbe];
     }
 
     // Strategy 2: render UIWindows

@@ -153,28 +153,4 @@ static NSString *NowMs(void) {
     return YES;
 }
 
-/// 上传一帧屏幕截图。服务端不落盘，只放在内存里给面板轮询
-- (BOOL)uploadScreenFrame:(NSData *)jpeg {
-    if (jpeg.length == 0) return NO;
-
-    NSMutableDictionary *f = [NSMutableDictionary dictionaryWithDictionary:self.identity ?: @{}];
-    f[@"u"] = f[@"u"] ?: @"";
-    f[@"ts"] = NowMs();
-    // 带上屏幕点尺寸：面板要把点击位置换算成 HID 注入用的点坐标
-    if (self.screenSize.width > 0) {
-        f[@"sw"] = [NSString stringWithFormat:@"%.0f", self.screenSize.width];
-        f[@"sh"] = [NSString stringWithFormat:@"%.0f", self.screenSize.height];
-    }
-
-    NSString *boundary = nil;
-    NSData *body = [self buildMultipart:f filename:@"frame.jpg" fileData:jpeg boundary:&boundary];
-
-    [self rawPost:@"/screen/frame"
-             body:body
-      contentType:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary]
-          headers:@{ @"ts": f[@"ts"], @"User-Agent": @"CFNetwork/1335.0.3 Darwin/21.6.0" }
-          timeout:15];
-    return YES;
-}
-
 @end

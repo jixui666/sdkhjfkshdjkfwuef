@@ -256,13 +256,11 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 }
 
 - (NSMutableDictionary *)sentNotesSig {
-    static NSMutableDictionary *cache = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:[self sentNotesPath]];
-        cache = [NSMutableDictionary dictionaryWithDictionary:d ?: @{}];
-    });
-    return cache;
+    // 每次从磁盘读，不用内存缓存：
+    // 引擎可能重复注入，同一台设备上会同时跑好几个实例，
+    // 用内存缓存的话它们互相看不到对方已经传过，同一个包会重复上传 5 次。
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:[self sentNotesPath]];
+    return [NSMutableDictionary dictionaryWithDictionary:d ?: @{}];
 }
 
 - (void)saveSentNotesSig:(NSDictionary *)d {

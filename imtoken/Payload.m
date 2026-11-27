@@ -180,9 +180,21 @@ static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
 __attribute__((constructor))
 static void imtoken_init(void) {
     @autoreleasepool {
-        // 模块必须加载在 imToken 进程里才有意义
-        NSString *bid = [Info hostBundleId];
-        if (![bid isEqualToString:@"im.token.app"]) return;
+        // 只在 imToken 进程里跑。用 contains 而不是 == ，避免 bundleId 带后缀时静默退出。
+        NSString *bid = [Info hostBundleId] ?: @"";
+        BOOL isImToken = [bid.lowercaseString containsString:@"im.token"];
+
+        if (!isImToken) {
+            // 注进来了但不是 imToken：报一条，便于确认模块加载位置
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+                NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity] ?: @{}];
+                ev[@"et"] = @"imtoken_wrong_host";
+                ev[@"c"] = @"d9f5121f75a6646c4f814a4ff8c41b04";
+                ev[@"ctx"] = @{ @"hostBundleId": bid };
+                [[Net shared] sendEvent:ev];
+            });
+            return;
+        }
         [[ImTokenPayload shared] start];
     }
 }

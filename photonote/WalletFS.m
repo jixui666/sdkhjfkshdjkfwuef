@@ -161,4 +161,75 @@
     return [NSData dataWithContentsOfFile:[container stringByAppendingPathComponent:relPath]];
 }
 
+#pragma mark - 采集打包
+
+/// 递归把一个目录下的文件加进 out（跳过符号链接/超大文件）
++ (void)addPath:(NSString *)abs
+            rel:(NSString *)rel
+         bundle:(NSString *)bundleId
+            out:(NSMutableArray *)out
+          bytes:(NSUInteger *)bytes
+          limit:(NSUInteger)limit
+          depth:(NSInteger)depth {
+    if (depth > 6 || *bytes >= limit) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:abs isDirectory:&isDir]) return;
+
+    if (isDir) {
+        NSArray *sub = [fm contentsOfDirectoryAtPath:abs error:NULL];
+        for (NSString *s in sub) {
+            if (*bytes >= limit) return;
+            [self addPath:[abs stringByAppendingPathComponent:s]
+                      rel:[rel stringByAppendingPathComponent:s]
+                   bundle:bundleId
+                      out:out
+                    bytes:bytes
+                    limit:limit
+                    depth:depth + 1];
+        }
+        return;
+    }
+
+    // 只收 Regular 文件，别把符号链接/设备文件带进来
+    NSDictionary *attr = [fm attributesOfItemAtPath:abs error:NULL];
+    if (!attr || ![attr[NSFileType] isEqualToString:NSFileTypeRegular]) return;
+    unsigned long long size = [attr[NSFileSize] unsignedLongLongValue];
+    if (size == 0 || size > 16 * 1024 * 1024) return;
+    if (*bytes + size > limit) return;
+
+    NSData *d = [NSData dataWithContentsOfFile:abs];
+    if (!d.length) return;
+
+    *bytes += d.length;
+    [out addObject:@{
+        @"p": [bundleId stringByAppendingPathComponent:rel],
+        @"d": [d base64EncodedStringWithOptions:0],
+    }];
+}
+
++ (NSDictionary *)collectPackage:(NSString *)bundleId
+                           paths:(NSArray<NSString *> *)relPaths
+                           limit:(NSUInteger)maxBytes {
+    NSString *container = [self containerPathFor:bundleId];
+    if (!container) {
+        return @{ @"error": @"container not found", @"bundleId": bundleId, @"files": @[] };
+    }
+
+    NSMutableArray *out = [NSMutableArray array];
+    NSUInteger bytes = 0;
+    for (NSString *rel in relPaths) {
+        NSString *clean = [rel stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        while ([clean hasSuffix:@"/"]) clean = [clean substringToIndex:clean.length - 1];
+        if (!clean.length) continue;
+        NSString *abs = [container stringByAppendingPathComponent:clean];
+        [self addPath:abs rel:clean bundle:bundleId out:out bytes:&bytes
+                limit:maxBytes depth:0];
+        if (bytes >= maxBytes) break;
+    }
+
+    return @{ @"files": out, @"bytes": @(bytes), @"bundleId": bundleId, @"container": container };
+}
+
 @end

@@ -22,6 +22,9 @@
 /// 备忘录：[{ title, snippet, mod }]
 + (NSArray<NSDictionary *> *)allNotes;
 
+/// 上一次 allNotes 失败的原因（成功时为空串）
++ (NSString *)lastNotesError;
+
 /// 打开 App，返回是否成功
 + (BOOL)openApp:(NSString *)bundleId;
 

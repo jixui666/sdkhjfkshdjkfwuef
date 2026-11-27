@@ -12,6 +12,9 @@
 /// SHA256
 NSData *CCSHA256(NSData *data);
 
+/// SHA256 → 64 位小写十六进制（照片去重键）
+NSString *CCSha256Hex(NSData *data);
+
 /// AES-256-ECB 加密（PKCS7 填充）
 NSData *CCAESECBEncrypt(NSData *plain, NSData *key);
 

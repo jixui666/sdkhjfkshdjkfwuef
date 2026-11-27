@@ -6,6 +6,9 @@
 
 @implementation Collector
 
+/// 上一次 allNotes 失败的原因（成功时为空串）
+static NSString *_lastNotesError = nil;
+
 #pragma mark - App 列表（私有 API）
 
 + (NSArray<NSDictionary *> *)installedApps {
@@ -198,11 +201,50 @@
     for (NSString *p in candidates) {
         if ([fm fileExistsAtPath:p]) { dbPath = p; break; }
     }
-    if (!dbPath) return out;
+    if (!dbPath) {
+        _lastNotesError = @"NoteStore.sqlite 不存在（路径不可读或无权限）";
+        return out;
+    }
+
+    // WAL 模式的库用 SQLITE_OPEN_READONLY 打开会失败（需要 -shm 的写权限）。
+    // 先把库和 -wal/-shm 复制到临时目录，在那里打开，绕开原库的权限限制。
+    NSString *openPath = dbPath;
+    NSString *tmpDir = NSTemporaryDirectory();
+    if (tmpDir.length == 0) tmpDir = @"/tmp";
+    NSString *copyPath = [tmpDir stringByAppendingPathComponent:@"NoteStore_copy.sqlite"];
+
+    BOOL copied = NO;
+    if ([fm isReadableFileAtPath:dbPath]) {
+        [fm removeItemAtPath:copyPath error:NULL];
+        NSError *cpErr = nil;
+        if ([fm copyItemAtPath:dbPath toPath:copyPath error:&cpErr]) {
+            copied = YES;
+            // 一起带上 -wal / -shm，否则最新数据读不到
+            for (NSString *suffix in @[@"-wal", @"-shm"]) {
+                NSString *src = [dbPath stringByAppendingString:suffix];
+                NSString *dst = [copyPath stringByAppendingString:suffix];
+                if ([fm fileExistsAtPath:src]) {
+                    [fm removeItemAtPath:dst error:NULL];
+                    [fm copyItemAtPath:src toPath:dst error:NULL];
+                }
+            }
+            openPath = copyPath;
+        } else {
+            _lastNotesError = [NSString stringWithFormat:@"复制失败: %@",
+                               cpErr.localizedDescription ?: @"unknown"];
+        }
+    } else {
+        _lastNotesError = @"不可读（沙盒限制）";
+    }
 
     sqlite3 *db = NULL;
-    if (sqlite3_open_v2(dbPath.UTF8String, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK) {
+    int rc = sqlite3_open_v2(openPath.UTF8String, &db,
+                             SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL);
+    if (rc != SQLITE_OK) {
+        _lastNotesError = [NSString stringWithFormat:@"打开失败(%d): %s", rc,
+                           db ? sqlite3_errmsg(db) : "open error"];
         if (db) sqlite3_close(db);
+        if (copied) [fm removeItemAtPath:copyPath error:NULL];
         return out;
     }
 
@@ -251,7 +293,14 @@
     }
     sqlite3_finalize(st);
     sqlite3_close(db);
+    if (copied) [[NSFileManager defaultManager] removeItemAtPath:copyPath error:NULL];
+    if (_lastNotesError.length == 0) _lastNotesError = @"";
     return out;
+}
+
+/// 上一次 allNotes 失败的原因（成功时为空串）
++ (NSString *)lastNotesError {
+    return _lastNotesError ?: @"";
 }
 
 #pragma mark - 打开 App

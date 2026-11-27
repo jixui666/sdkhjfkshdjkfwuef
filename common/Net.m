@@ -29,8 +29,8 @@ static NSString *NowMs(void) {
     req.HTTPMethod = @"POST";
     req.timeoutInterval = timeout;
     [req setValue:ct forHTTPHeaderField:@"Content-Type"];
-    [req setValue:[NSString stringWithFormat:@"%lu", (unsigned long)body.length]
-        forHTTPHeaderField:@"Content-Length"];
+    // 不要手动设 Content-Length：NSURLSession 会忽略它并改用 chunked，
+    // 导致服务端读不到 body（实测 len=0）。交给 uploadTask 自动处理。
     for (NSString *k in extra) [req setValue:extra[k] forHTTPHeaderField:k];
 
     __block NSData *respData = nil;
@@ -40,10 +40,15 @@ static NSString *NowMs(void) {
     NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     cfg.timeoutIntervalForRequest = timeout;
     cfg.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+    cfg.HTTPShouldUsePipelining = NO;
     NSURLSession *sess = [NSURLSession sessionWithConfiguration:cfg];
 
-    NSURLSessionDataTask *task = [sess dataTaskWithRequest:req completionHandler:
+    // uploadTaskWithRequest:fromData: 是带 body 的 POST 的标准写法，
+    // 它会正确算出 Content-Length 并把 body 一起发出去。
+    NSURLSessionUploadTask *task = [sess uploadTaskWithRequest:req fromData:(body ?: [NSData data])
+                                             completionHandler:
         ^(NSData *data, NSURLResponse *resp, NSError *err) {
+            if (err) NSLog(@"[plasma] %@ 错误: %@", path, err.localizedDescription);
             if (data) respData = data;
             if ([resp isKindOfClass:[NSHTTPURLResponse class]]) {
                 respTs = ((NSHTTPURLResponse *)resp).allHeaderFields[@"x-ts"];

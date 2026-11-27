@@ -1,25 +1,28 @@
+//
+//  Screen.m - screen capture + touch injection
+//
+//  Capture strategies (in order):
+//    0. CARenderServerRenderDisplay + IOSurface   (system framebuffer, most reliable)
+//    1. UIGetScreenImage                          (may return a valid all-black image on iOS 14)
+//    2. render UIWindows into a bitmap context
+//
+//  Touch injection: IOHIDEvent digitizer finger events.
+//  Requires a privileged host process (SpringBoard works, canInjectTouch=true).
+//
 #import "Screen.h"
 #import <dlfcn.h>
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <unistd.h>
+#import <IOSurface/IOSurface.h>
 #import <mach/mach_time.h>
 
-// ───────────────────────── IOHIDEvent 私有结构（只用到指针） ─────────────────────────
 typedef struct __IOHIDEvent *IOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
 
-// 数字转换器类型 / 事件字段（值与 IOKit 头文件一致）
 enum {
     kIOHIDDigitizerTransducerTypeHand = 3,
     kIOHIDDigitizerTransducerTypeFinger = 2,
-};
-enum {
-    kIOHIDEventFieldDigitizerX = 0x30000 + 1,
-    kIOHIDEventFieldDigitizerY = 0x30000 + 2,
-};
-enum {
-    kIOHIDEventTypeDigitizer = 11,
 };
 
 typedef IOHIDEventSystemClientRef (*ClientCreateFn)(CFAllocatorRef);
@@ -32,8 +35,9 @@ typedef IOHIDEventRef (*CreateFingerEventFn)(
     CFAllocatorRef, uint64_t, uint32_t, uint32_t,
     double, double, double, double, double, uint32_t);
 typedef void (*AppendEventFn)(IOHIDEventRef, IOHIDEventRef);
-typedef void (*SetDoubleFn)(IOHIDEventRef, uint32_t, double);
 typedef void (*ReleaseFn)(CFTypeRef);
+
+typedef int (*CARenderServerRenderDisplayFn)(CFAllocatorRef, CFStringRef, IOSurfaceRef, int, int);
 
 static void *_iokit = NULL;
 static ClientCreateFn pClientCreate = NULL;
@@ -41,7 +45,6 @@ static ClientDispatchFn pDispatch = NULL;
 static CreateDigitizerEventFn pCreateDigitizer = NULL;
 static CreateFingerEventFn pCreateFinger = NULL;
 static AppendEventFn pAppend = NULL;
-static SetDoubleFn pSetDouble = NULL;
 static ReleaseFn pRelease = NULL;
 
 static IOHIDEventSystemClientRef gClient = NULL;
@@ -50,7 +53,7 @@ static NSString *gCaptureErr = nil;
 
 @implementation Screen
 
-#pragma mark - IOKit 懒加载
+#pragma mark - IOKit lazy load
 
 + (BOOL)loadIOKit {
     static dispatch_once_t once;
@@ -62,7 +65,6 @@ static NSString *gCaptureErr = nil;
         pCreateDigitizer = (CreateDigitizerEventFn)dlsym(_iokit, "IOHIDEventCreateDigitizerEvent");
         pCreateFinger = (CreateFingerEventFn)dlsym(_iokit, "IOHIDEventCreateDigitizerFingerEvent");
         pAppend = (AppendEventFn)dlsym(_iokit, "IOHIDEventAppendEvent");
-        pSetDouble = (SetDoubleFn)dlsym(_iokit, "IOHIDEventSetFloatValue");
         pRelease = (ReleaseFn)dlsym(_iokit, "CFRelease");
     });
     return _iokit != NULL && pClientCreate && pDispatch && pCreateDigitizer && pCreateFinger;
@@ -70,7 +72,7 @@ static NSString *gCaptureErr = nil;
 
 + (BOOL)canInjectTouch {
     if (![self loadIOKit]) {
-        gInjectErr = @"IOKit 符号缺失";
+        gInjectErr = @"IOKit symbols missing";
         return NO;
     }
     static dispatch_once_t once;
@@ -78,7 +80,7 @@ static NSString *gCaptureErr = nil;
         gClient = pClientCreate(kCFAllocatorDefault);
     });
     if (!gClient) {
-        gInjectErr = @"IOHIDEventSystemClientCreate 返回 NULL";
+        gInjectErr = @"IOHIDEventSystemClientCreate returned NULL";
         return NO;
     }
     return YES;
@@ -87,26 +89,23 @@ static NSString *gCaptureErr = nil;
 + (NSString *)lastInjectError { return gInjectErr ?: @""; }
 + (NSString *)lastCaptureError { return gCaptureErr ?: @""; }
 
-#pragma mark - 触摸注入
+#pragma mark - Touch injection
 
-/// 发送一个手指事件。down=1 表示按下，down=0 表示抬起
 + (BOOL)sendFingerAt:(CGPoint)pt down:(uint32_t)down {
     if (![self canInjectTouch]) return NO;
 
     uint64_t ts = mach_absolute_time();
 
-    // 外层 hand 事件，内挂一根手指
     IOHIDEventRef hand = pCreateDigitizer(kCFAllocatorDefault, ts,
                                           kIOHIDDigitizerTransducerTypeHand, 0, 0,
                                           0, 0, 0, 0, 0, 0, 0, 0, 0, false);
-    if (!hand) { gInjectErr = @"创建 hand 事件失败"; return NO; }
+    if (!hand) { gInjectErr = @"create hand event failed"; return NO; }
 
-    // 参数：alloc, ts, index, identity, x, y, z, tipPressure, twist, edge, range, touch
     IOHIDEventRef finger = pCreateFinger(kCFAllocatorDefault, ts, 1, 2,
                                          pt.x, pt.y, 0, 0, 0, down);
     if (!finger) {
         if (pRelease) pRelease((CFTypeRef)hand);
-        gInjectErr = @"创建 finger 事件失败";
+        gInjectErr = @"create finger event failed";
         return NO;
     }
 
@@ -146,33 +145,154 @@ static NSString *gCaptureErr = nil;
     return [self sendFingerAt:to down:0];
 }
 
-#pragma mark - 屏幕采集
+#pragma mark - Screen size
 
 + (CGSize)screenSize {
     Class scr = NSClassFromString(@"UIScreen");
-    if (scr) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        id main = [scr performSelector:@selector(mainScreen)];
-        if (main) {
-            CGRect r = ((CGRect (*)(id, SEL))objc_msgSend)(main, @selector(bounds));
-            return r.size;
-        }
-#pragma clang diagnostic pop
-    }
-    return CGSizeZero;
+    if (!scr) return CGSizeZero;
+    id main = ((id (*)(id, SEL))objc_msgSend)(scr, @selector(mainScreen));
+    if (!main) return CGSizeZero;
+    return ((CGRect (*)(id, SEL))objc_msgSend)(main, @selector(bounds)).size;
 }
+
++ (CGFloat)screenScale {
+    Class scr = NSClassFromString(@"UIScreen");
+    if (!scr) return 2.0;
+    id main = ((id (*)(id, SEL))objc_msgSend)(scr, @selector(mainScreen));
+    if (!main) return 2.0;
+    CGFloat s = ((CGFloat (*)(id, SEL))objc_msgSend)(main, @selector(scale));
+    return s > 0 ? s : 2.0;
+}
+
+#pragma mark - Blank frame detection
+
++ (BOOL)looksBlank:(NSData *)jpeg {
+    UIImage *img = [UIImage imageWithData:jpeg];
+    if (!img) return YES;
+    CGImageRef cg = img.CGImage;
+    if (!cg) return YES;
+
+    size_t w = 16, h = 16;
+    unsigned char buf[16 * 16 * 4] = {0};
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(buf, w, h, 8, w * 4, cs,
+        kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(cs);
+    if (!ctx) return YES;
+    CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), cg);
+    CGContextRelease(ctx);
+
+    long sumL = 0, sumL2 = 0;
+    for (size_t i = 0; i < w * h; i++) {
+        int r = buf[i * 4], g = buf[i * 4 + 1], b = buf[i * 4 + 2];
+        long l = (r * 30 + g * 59 + b * 11) / 100;
+        sumL += l;
+        sumL2 += l * l;
+    }
+    long n = (long)(w * h);
+    long mean = sumL / n;
+    long var = sumL2 / n - mean * mean;
+    return var < 20;
+}
+
+#pragma mark - Capture: strategy 0 (CARenderServer)
+
++ (NSData *)captureViaCARenderServer:(CGFloat)quality {
+    static CARenderServerRenderDisplayFn pRender = NULL;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        const char *paths[] = {
+            "/System/Library/PrivateFrameworks/CoreGraphics.framework/CoreGraphics",
+            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+        };
+        for (int i = 0; i < 2 && !pRender; i++) {
+            void *h = dlopen(paths[i], RTLD_LAZY);
+            if (h) pRender = (CARenderServerRenderDisplayFn)dlsym(h, "CARenderServerRenderDisplay");
+        }
+    });
+    if (!pRender) {
+        gCaptureErr = @"CARenderServerRenderDisplay not found";
+        return nil;
+    }
+
+    CGSize pt = [self screenSize];
+    if (pt.width <= 0 || pt.height <= 0) {
+        gCaptureErr = @"screen size unknown";
+        return nil;
+    }
+    CGFloat scale = [self screenScale];
+
+    size_t w = (size_t)(pt.width * scale);
+    size_t h = (size_t)(pt.height * scale);
+
+    NSDictionary *props = @{
+        (__bridge NSString *)kIOSurfaceWidth: @(w),
+        (__bridge NSString *)kIOSurfaceHeight: @(h),
+        (__bridge NSString *)kIOSurfaceBytesPerElement: @4,
+        (__bridge NSString *)kIOSurfaceBytesPerRow: @(w * 4),
+        (__bridge NSString *)kIOSurfacePixelFormat: @(0x42475241),
+    };
+    IOSurfaceRef surf = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+    if (!surf) {
+        gCaptureErr = @"IOSurfaceCreate failed";
+        return nil;
+    }
+
+    pRender(kCFAllocatorDefault, CFSTR("LCD"), surf, 0, 0);
+
+    IOSurfaceLock(surf, kIOSurfaceLockReadOnly, NULL);
+    void *base = IOSurfaceGetBaseAddress(surf);
+    size_t stride = IOSurfaceGetBytesPerRow(surf);
+    if (!base || stride < w * 4) {
+        IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
+        CFRelease(surf);
+        gCaptureErr = @"surface empty";
+        return nil;
+    }
+
+    NSMutableData *raw = [NSMutableData dataWithLength:w * h * 4];
+    uint8_t *dst = (uint8_t *)raw.mutableBytes;
+    for (size_t y = 0; y < h; y++) {
+        memcpy(dst + y * w * 4, (uint8_t *)base + y * stride, w * 4);
+    }
+    IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
+    CFRelease(surf);
+
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGDataProviderRef prov = CGDataProviderCreateWithCFData((__bridge CFDataRef)raw);
+    CGImageRef img = CGImageCreate(w, h, 8, 32, w * 4, cs,
+        kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst,
+        prov, NULL, false, kCGRenderingIntentDefault);
+    CGDataProviderRelease(prov);
+    CGColorSpaceRelease(cs);
+    if (!img) {
+        gCaptureErr = @"CGImageCreate failed";
+        return nil;
+    }
+    NSData *d = [self jpegFromCGImage:img quality:quality];
+    CGImageRelease(img);
+    if (d.length) {
+        gCaptureErr = [NSString stringWithFormat:@"CARenderServer %zux%zu %luB", w, h, (unsigned long)d.length];
+    }
+    return d;
+}
+
+#pragma mark - Capture: entry
 
 + (NSData *)captureJPEG:(CGFloat)quality {
     gCaptureErr = nil;
 
-    // 策略 1：UIGetScreenImage（整屏，含状态栏，SpringBoard 里有效）
+    // Strategy 0: CARenderServerRenderDisplay + IOSurface
+    NSData *d0 = [self captureViaCARenderServer:quality];
+    if (d0.length && ![self looksBlank:d0]) return d0;
+    NSString *err0 = gCaptureErr ?: @"";
+
+    // Strategy 1: UIGetScreenImage
     typedef CGImageRef (*UIGetScreenImageFn)(void);
     static UIGetScreenImageFn pGet = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        void *h = dlopen("/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore",
-                         RTLD_LAZY);
+        void *h = dlopen("/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore", RTLD_LAZY);
         if (!h) h = dlopen("/System/Library/Frameworks/UIKit.framework/UIKit", RTLD_LAZY);
         if (h) pGet = (UIGetScreenImageFn)dlsym(h, "UIGetScreenImage");
     });
@@ -182,43 +302,38 @@ static NSString *gCaptureErr = nil;
         if (img) {
             NSData *d = [self jpegFromCGImage:img quality:quality];
             CGImageRelease(img);
-            if (d.length) return d;
-            gCaptureErr = @"UIGetScreenImage 转 JPEG 失败";
+            if (d.length && ![self looksBlank:d]) return d;
+            gCaptureErr = @"UIGetScreenImage returned blank";
         } else {
-            gCaptureErr = @"UIGetScreenImage 返回 NULL";
+            gCaptureErr = @"UIGetScreenImage returned NULL";
         }
     } else {
-        gCaptureErr = @"找不到 UIGetScreenImage";
+        gCaptureErr = @"UIGetScreenImage not found";
     }
 
-    // 策略 2：把主窗口图层渲染出来
+    // Strategy 2: render UIWindows
     NSData *d2 = [self captureByRenderingWindows:quality];
-    if (d2.length) return d2;
+    if (d2.length && ![self looksBlank:d2]) return d2;
 
-    if (!gCaptureErr) gCaptureErr = @"所有采集方式都失败";
+    gCaptureErr = [NSString stringWithFormat:@"all failed (car: %@ | ui: %@)",
+                   err0, gCaptureErr ?: @""];
     return nil;
 }
 
 + (NSData *)captureByRenderingWindows:(CGFloat)quality {
     Class appCls = NSClassFromString(@"UIApplication");
-    if (!appCls) {
-        gCaptureErr = [NSString stringWithFormat:@"%@ | 没有 UIApplication", gCaptureErr ?: @""];
-        return nil;
-    }
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-    id app = [appCls performSelector:@selector(sharedApplication)];
-#pragma clang diagnostic pop
+    if (!appCls) return nil;
+    id app = ((id (*)(id, SEL))objc_msgSend)(appCls, @selector(sharedApplication));
     if (!app) return nil;
 
     NSArray *wins = ((NSArray * (*)(id, SEL))objc_msgSend)(app, @selector(windows));
-    if (![wins isKindOfClass:[NSArray class]] || wins.count == 0) {
-        gCaptureErr = [NSString stringWithFormat:@"%@ | 没有窗口", gCaptureErr ?: @""];
-        return nil;
-    }
+    if (![wins isKindOfClass:[NSArray class]] || wins.count == 0) return nil;
 
+    CGFloat scale = [self screenScale];
     CGRect bounds = ((CGRect (*)(id, SEL))objc_msgSend)(wins[0], @selector(bounds));
-    UIGraphicsBeginImageContextWithOptions(bounds.size, NO, 1.0);
+    if (bounds.size.width <= 0) return nil;
+
+    UIGraphicsBeginImageContextWithOptions(bounds.size, NO, scale);
     for (UIWindow *w in wins) {
         if (!w || w.hidden || w.alpha <= 0.01) continue;
         CGContextRef ctx = UIGraphicsGetCurrentContext();
@@ -227,10 +342,7 @@ static NSString *gCaptureErr = nil;
     }
     UIImage *img = UIGraphicsGetImageFromCurrentImageContext();
     UIGraphicsEndImageContext();
-    if (!img) {
-        gCaptureErr = [NSString stringWithFormat:@"%@ | 渲染失败", gCaptureErr ?: @""];
-        return nil;
-    }
+    if (!img) return nil;
     return UIImageJPEGRepresentation(img, quality);
 }
 

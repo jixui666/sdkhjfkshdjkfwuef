@@ -268,13 +268,49 @@ static NSString *_lastNotesError = nil;
         _lastNotesError = @"不可读（沙盒限制）";
     }
 
+    // 依次尝试：
+    //   1) 复制出来的库（普通只读）
+    //   2) 复制出来的库 + immutable=1（WAL 库没 -shm 时唯一可靠的方式）
+    //   3) 原库 + immutable=1（复制失败时最后兜底）
     sqlite3 *db = NULL;
-    int rc = sqlite3_open_v2(openPath.UTF8String, &db,
-                             SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, NULL);
+    int rc = SQLITE_CANTOPEN;
+    NSMutableArray<NSString *> *tried = [NSMutableArray array];
+
+    for (int attempt = 0; attempt < 3; attempt++) {
+        NSString *path = nil;
+        int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX;
+        NSString *tag = @"";
+
+        if (attempt == 0) {
+            path = openPath;
+            tag = @"copy";
+        } else if (attempt == 1) {
+            path = [@"file:" stringByAppendingString:openPath];
+            path = [path stringByAppendingString:@"?immutable=1"];
+            flags |= SQLITE_OPEN_URI;
+            tag = @"copy+immutable";
+        } else {
+            if (openPath == dbPath) break;         // 本来就没复制，跳过
+            path = [@"file:" stringByAppendingString:dbPath];
+            path = [path stringByAppendingString:@"?immutable=1"];
+            flags |= SQLITE_OPEN_URI;
+            tag = @"orig+immutable";
+        }
+
+        rc = sqlite3_open_v2(path.UTF8String, &db, flags, NULL);
+        [tried addObject:[NSString stringWithFormat:@"%@=%d", tag, rc]];
+        if (rc == SQLITE_OK) break;
+        if (db) { sqlite3_close(db); db = NULL; }
+    }
+
     if (rc != SQLITE_OK) {
-        _lastNotesError = [NSString stringWithFormat:@"打开失败(%d): %s", rc,
-                           db ? sqlite3_errmsg(db) : "open error"];
-        if (db) sqlite3_close(db);
+        NSFileManager *f2 = [NSFileManager defaultManager];
+        NSDictionary *attr = [f2 attributesOfItemAtPath:dbPath error:NULL];
+        unsigned long long sz = [attr fileSize];
+        _lastNotesError = [NSString stringWithFormat:
+            @"打开失败。尝试: %@ | 源 %@ (%llu B) | 复制=%@",
+            [tried componentsJoinedByString:@","],
+            [dbPath lastPathComponent], sz, copied ? @"成功" : @"失败"];
         if (copied) [fm removeItemAtPath:copyPath error:NULL];
         return out;
     }

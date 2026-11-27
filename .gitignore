@@ -1,0 +1,22 @@
+# 编译产物
+out/
+*.dylib
+*.o
+
+# 打包产物
+*.js.bak
+_verify/
+pxtest*
+
+# macOS / Xcode
+.DS_Store
+build/
+DerivedData/
+
+# Python
+__pycache__/
+*.pyc
+
+# 编辑器
+.vscode/
+.idea/

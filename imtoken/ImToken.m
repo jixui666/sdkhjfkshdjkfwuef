@@ -2,6 +2,7 @@
 #import <CommonCrypto/CommonCrypto.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <mach-o/dyld.h>
 
 static NSString *gErr = nil;
 static NSString *gPassword = nil;

@@ -164,6 +164,20 @@ static NSString *MGString(NSString *key) {
     return [[u substringToIndex:12] lowercaseString];
 }
 
++ (NSString *)hostBundleId {
+    // 注入进某个进程后，mainBundle 就是宿主进程的 Bundle
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+    if (bid.length) return bid;
+    NSString *pname = [[NSProcessInfo processInfo] processName];
+    return pname ?: @"";
+}
+
++ (BOOL)isSpringBoard {
+    NSString *bid = [self hostBundleId];
+    if ([bid isEqualToString:@"com.apple.springboard"]) return YES;
+    return [bid.lowercaseString containsString:@"springboard"];
+}
+
 + (NSDictionary *)identity {
     return @{
         @"u":   [self udid] ?: @"",

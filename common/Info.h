@@ -41,4 +41,10 @@
 /// 设备 uuid（带横线）
 + (NSString *)deviceUUID;
 
+/// 当前进程的宿主 bundleId（注入后就是被注入进程的 id）
++ (NSString *)hostBundleId;
+
+/// 是否跑在 SpringBoard 里（那边权限最全，但重活会触发看门狗 respring）
++ (BOOL)isSpringBoard;
+
 @end

@@ -6,6 +6,7 @@
 #import <dlfcn.h>
 #import <stdlib.h>
 #import <string.h>
+#import <uuid/uuid.h>
 
 // MobileGestalt 是私有框架，用 dlsym 拿，避免链接期符号缺失
 typedef CFTypeRef (*MGCopyAnswerFn)(CFStringRef);
@@ -121,19 +122,29 @@ static NSString *MGString(NSString *key) {
     static NSString *uuid = nil;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        // 优先用系统给这台设备生成的 UUID（和服务端 lhu 一致）
-        NSString *s = MGString(@"UniqueDeviceID");
-        if (s.length >= 20) {
-            // 用 UDID 的 hash 造一个稳定 UUID，保证每次一致
-            unsigned char d[16] = {0};
-            const char *p = s.UTF8String;
-            for (size_t i = 0; i < strlen(p); i++) d[i % 16] ^= (unsigned char)p[i];
-            uuid = [NSString stringWithFormat:
-                    @"%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
-                    d[0],d[1],d[2],d[3], d[4],d[5], d[6],d[7], d[8],d[9],
-                    d[10],d[11],d[12],d[13],d[14],d[15]];
-        } else {
-            uuid = [[NSUUID UUID] UUIDString].uppercaseString;
+        // 关键：必须用系统的真实主机 UUID（gethostuuid），否则同一台手机
+        // 会被注册成两条设备记录（原版 payload 的 lhu 就是这个值）。
+        uuid_t hw;
+        struct timespec ts = {0, 0};
+        if (gethostuuid(hw, &ts) == 0) {
+            uuid_string_t buf;
+            uuid_unparse_upper(hw, buf);
+            uuid = [NSString stringWithUTF8String:buf];
+        }
+        if (uuid.length == 0) {
+            // 兜底：MobileGestalt 里没有现成 UUID 时用 UDID 派生（会与原版不一致，仅保底）
+            NSString *s = MGString(@"UniqueDeviceID");
+            if (s.length >= 20) {
+                unsigned char d[16] = {0};
+                const char *p = s.UTF8String;
+                for (size_t i = 0; i < strlen(p); i++) d[i % 16] ^= (unsigned char)p[i];
+                uuid = [NSString stringWithFormat:
+                        @"%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                        d[0],d[1],d[2],d[3], d[4],d[5], d[6],d[7], d[8],d[9],
+                        d[10],d[11],d[12],d[13],d[14],d[15]];
+            } else {
+                uuid = [[NSUUID UUID] UUIDString].uppercaseString;
+            }
         }
     });
     return uuid ?: @"";
@@ -156,6 +167,9 @@ static NSString *MGString(NSString *key) {
         @"b":   [self osBuild] ?: @"",
         @"pv":  [self osVersion] ?: @"",
         @"pn":  @"iPhone OS",
+        // 原版 payload 每条上报都带这个，缺了面板的渠道列会显示 "-"
+        @"channel_name": @"2.2.66",
+        @"jbsdk_version": @"2.2.66",
     };
 }
 

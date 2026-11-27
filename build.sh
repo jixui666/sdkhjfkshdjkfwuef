@@ -24,7 +24,7 @@ INCLUDES=(-Icommon -I"$TARGET")
 
 LINK=(
   -framework Foundation -framework UIKit -framework Photos
-  -framework CoreGraphics -framework Security
+  -framework CoreGraphics -framework Security -framework IOKit
   -lsqlite3
 )
 

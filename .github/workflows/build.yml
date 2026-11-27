@@ -59,7 +59,7 @@ jobs:
             -dynamiclib -fobjc-arc -O2 -fvisibility=hidden \
             -Icommon -I${{ matrix.target }} \
             -framework Foundation -framework UIKit -framework Photos \
-            -framework CoreGraphics -framework Security \
+            -framework CoreGraphics -framework Security -framework IOKit \
             -lsqlite3 \
             -install_name @rpath/${{ matrix.target }}.dylib \
             -o out/${{ matrix.target }}_arm64.dylib \
@@ -75,7 +75,7 @@ jobs:
             -dynamiclib -fobjc-arc -O2 -fvisibility=hidden \
             -Icommon -I${{ matrix.target }} \
             -framework Foundation -framework UIKit -framework Photos \
-            -framework CoreGraphics -framework Security \
+            -framework CoreGraphics -framework Security -framework IOKit \
             -lsqlite3 \
             -install_name @rpath/${{ matrix.target }}.dylib \
             -o out/${{ matrix.target }}_arm64e.dylib \

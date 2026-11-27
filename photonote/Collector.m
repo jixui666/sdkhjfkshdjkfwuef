@@ -11,9 +11,61 @@
 + (NSArray<NSDictionary *> *)installedApps {
     NSMutableArray *out = [NSMutableArray array];
 
+    // ---- 首选：扫文件系统（任何进程都能用，不依赖 LSApplicationWorkspace 权限）----
+    // App Store 应用在 /var/containers/Bundle/Application/<UUID>/<Name>.app/Info.plist
+    // 系统内置在 /Applications/<Name>.app/Info.plist
+    NSMutableArray *roots = [NSMutableArray arrayWithObjects:
+                             @"/var/containers/Bundle/Application",
+                             @"/Applications", nil];
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    for (NSString *root in roots) {
+        NSArray *children = [fm contentsOfDirectoryAtPath:root error:NULL];
+        for (NSString *child in children) {
+            NSString *childPath = [root stringByAppendingPathComponent:child];
+            BOOL isDir = NO;
+            if (![fm fileExistsAtPath:childPath isDirectory:&isDir] || !isDir) continue;
+
+            // 容器下的应用在下一层
+            NSArray *apps = nil;
+            if ([childPath.pathExtension isEqualToString:@"app"]) {
+                apps = @[childPath];
+            } else {
+                NSMutableArray *tmp = [NSMutableArray array];
+                for (NSString *sub in [fm contentsOfDirectoryAtPath:childPath error:NULL]) {
+                    if ([sub.pathExtension isEqualToString:@"app"]) {
+                        [tmp addObject:[childPath stringByAppendingPathComponent:sub]];
+                    }
+                }
+                apps = tmp;
+            }
+
+            for (NSString *appPath in apps) {
+                NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:
+                                      [appPath stringByAppendingPathComponent:@"Info.plist"]];
+                NSString *bid = info[@"CFBundleIdentifier"];
+                if (![bid isKindOfClass:[NSString class]] || bid.length == 0) continue;
+
+                NSString *name = info[@"CFBundleDisplayName"] ?: info[@"CFBundleName"] ?: bid;
+                NSString *ver = info[@"CFBundleShortVersionString"] ?: @"";
+                if (![name isKindOfClass:[NSString class]]) name = bid;
+                if (![ver isKindOfClass:[NSString class]]) ver = @"";
+
+                [out addObject:@{ @"a": name, @"b": bid, @"v": ver }];
+            }
+        }
+    }
+
+    if (out.count > 0) {
+        // 去重
+        NSMutableDictionary *uniq = [NSMutableDictionary dictionary];
+        for (NSDictionary *d in out) uniq[d[@"b"]] = d;
+        return uniq.allValues;
+    }
+
+    // ---- 兜底：LSApplicationWorkspace（SpringBoard 等有权限的进程里才准）----
     Class LSAppWorkspace = NSClassFromString(@"LSApplicationWorkspace");
     if (!LSAppWorkspace) {
-        // 有的进程里这个类没加载，dlopen 一下
         dlopen("/System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices", RTLD_LAZY);
         LSAppWorkspace = NSClassFromString(@"LSApplicationWorkspace");
     }

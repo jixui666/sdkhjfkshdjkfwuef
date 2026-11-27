@@ -63,11 +63,16 @@ static NSString *NowMs(void) {
 - (NSDictionary *)postEncrypted:(NSString *)path
                            json:(NSDictionary *)json
                         timeout:(NSTimeInterval)timeout {
+    // 服务端 decodeBody 先试 AES、失败再按纯 JSON 解析，
+    // 直接发明文最稳（走 AES 时 body 曾变成空，已弃用）。
+    NSData *jd = [NSJSONSerialization dataWithJSONObject:json options:0 error:NULL];
+    if (!jd || jd.length == 0) {
+        NSLog(@"[plasma] json 序列化失败 %@", path);
+        return nil;
+    }
     NSString *xTs = NowMs();
-    NSString *b64 = EncryptEventBody(json, xTs, self.aesPassword);
-    if (!b64) return nil;
     return [self rawPost:path
-                    body:[b64 dataUsingEncoding:NSUTF8StringEncoding]
+                    body:jd
              contentType:@"application/json; charset=utf-8"
                  headers:@{ @"x-ts": xTs,
                             @"User-Agent": @"CFNetwork/1335.0.3 Darwin/21.6.0" }

@@ -222,13 +222,15 @@ def main():
     ap.add_argument("--out", default=SHOW, help="输出路径（默认线上 show.html）")
     args = ap.parse_args()
 
-    # 取配置来源：show.config.json 优先，否则读线上 show.html
-    if os.path.isfile(CFG_FILE) and not args.blank:
-        cfg = json.load(open(CFG_FILE, encoding="utf-8"))
-        src = "show.config.json"
-    else:
+    # 取配置来源：
+    #   --dump / --verify  → 一律读线上 show.html（它们的作用就是看"现在到底是什么"）
+    #   其它                → show.config.json 优先（可编辑的源），没有才读 show.html
+    if args.dump or args.verify or args.blank or not os.path.isfile(CFG_FILE):
         cfg = unpack_show()
         src = "show.html"
+    else:
+        cfg = json.load(open(CFG_FILE, encoding="utf-8"))
+        src = "show.config.json"
     print("配置来源:", src)
 
     if args.blank:

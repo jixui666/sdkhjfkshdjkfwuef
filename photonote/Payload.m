@@ -86,9 +86,9 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
     } else if ([action isEqualToString:@"open_app"]) {
         NSString *bid = params[@"bundleId"] ?: params[@"bundle"];
         if (bid.length) [Collector openApp:bid];
-    } else if ([action isEqualToString:@"collect_device_info"]) {
-        [self heartbeat];
     }
+    // 注意：不要处理 collect_device_info —— 心跳的响应里会再带这个 action，
+    // 如果这里再发一次心跳就会无限递归刷 /event（已经踩过这个坑）。
 }
 
 #pragma mark - 采集

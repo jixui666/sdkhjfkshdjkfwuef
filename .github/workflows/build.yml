@@ -1,10 +1,10 @@
-name: build-payload
+﻿name: build-payload
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: '要编译的载荷目录（photonote / 以后加的）'
+        description: '瑕佺紪璇戠殑杞借嵎鐩綍锛坧hotonote / 浠ュ悗鍔犵殑锛?
         required: true
         default: 'photonote'
   push:
@@ -25,8 +25,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "targets=[\"${{ github.event.inputs.target }}\"]" >> $GITHUB_OUTPUT
           else
-            # 自动发现：所有含 *.m 的顶层目录（排除 common/tools/out）
-            LIST=$(find . -maxdepth 2 -name '*.m' -not -path './common/*' -not -path './tools/*' \
+            # 鑷姩鍙戠幇锛氭墍鏈夊惈 *.m 鐨勯《灞傜洰褰曪紙鎺掗櫎 common/tools/out锛?            LIST=$(find . -maxdepth 2 -name '*.m' -not -path './common/*' -not -path './tools/*' \
                    | xargs -n1 dirname | sed 's|^\./||' | sort -u | grep -v '^common$' | grep -v '^tools$' \
                    | jq -R -s -c 'split("\n") | map(select(length>0))')
             echo "targets=$LIST" >> $GITHUB_OUTPUT
@@ -35,7 +34,7 @@ jobs:
 
   build:
     needs: detect
-    runs-on: macos-14
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:

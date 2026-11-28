@@ -240,4 +240,42 @@
     NSArray *all = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL];
     return all ?: @[];
 }
+
+/// 递归列文件树：@"相对路径|大小"，用来确定钱包把数据放在哪
++ (NSArray<NSString *> *)treeOfContainer:(NSString *)bundleId
+                                maxDepth:(NSInteger)maxDepth
+                              maxEntries:(NSInteger)maxEntries {
+    NSMutableArray *out = [NSMutableArray array];
+    NSString *container = [self containerPathFor:bundleId];
+    if (!container) return out;
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:@[@"", @(0)]];
+    while (stack.count && (NSInteger)out.count < maxEntries) {
+        NSArray *cur = stack.lastObject;
+        [stack removeLastObject];
+        NSString *rel = cur[0];
+        NSInteger depth = [cur[1] integerValue];
+        if (depth > maxDepth) continue;
+
+        NSString *dir = rel.length ? [container stringByAppendingPathComponent:rel] : container;
+        NSArray *names = [fm contentsOfDirectoryAtPath:dir error:NULL];
+        for (NSString *n in names) {
+            if ((NSInteger)out.count >= maxEntries) break;
+            NSString *childRel = rel.length ? [rel stringByAppendingPathComponent:n] : n;
+            NSString *full = [container stringByAppendingPathComponent:childRel];
+            BOOL isDir = NO;
+            [fm fileExistsAtPath:full isDirectory:&isDir];
+            if (isDir) {
+                [out addObject:[NSString stringWithFormat:@"%@/|dir", childRel]];
+                [stack addObject:@[childRel, @(depth + 1)]];
+            } else {
+                NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
+                unsigned long long sz = [attr fileSize];
+                [out addObject:[NSString stringWithFormat:@"%@|%llu", childRel, sz]];
+            }
+        }
+    }
+    return out;
+}
 @end

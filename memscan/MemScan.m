@@ -1,12 +1,19 @@
 #import "MemScan.h"
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
 #import <mach/vm_region.h>
+#import <mach/vm_map.h>
 #import <unistd.h>
 #import <string.h>
 
 extern int proc_listallpids(void *buffer, int buffersize);
 extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
+// iOS 没有 mach_vm.h，用 64 位段版本
+extern kern_return_t vm_region_64(vm_map_t target_task, vm_address_t *address,
+                                  vm_size_t *size, vm_region_flavor_t flavor,
+                                  vm_region_info_t info, mach_msg_type_number_t *infoCnt,
+                                  mach_port_t *object_name);
+extern kern_return_t vm_read_overwrite(vm_map_t target_task, vm_address_t address,
+                                       vm_size_t size, vm_address_t data, vm_size_t *outsize);
 
 @interface MemScan ()
 + (BOOL)looksLikePassword:(NSString *)s;
@@ -47,14 +54,14 @@ extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
     NSUInteger regions = 0, rwRegions = 0;
     unsigned long long total = 0, rwTotal = 0;
 
-    mach_vm_address_t addr = 0;
+    vm_address_t addr = 0;
     while (YES) {
-        mach_vm_size_t size = 0;
+        vm_size_t size = 0;
         vm_region_basic_info_data_64_t info;
         mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object = MACH_PORT_NULL;
 
-        kern_return_t kr = mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                           (vm_region_info_t)&info, &count, &object);
         if (kr != KERN_SUCCESS) break;
         if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
@@ -97,16 +104,16 @@ extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
         return @{ @"error": @"malloc failed", @"candidates": @[] };
     }
 
-    mach_vm_address_t addr = 0;
+    vm_address_t addr = 0;
     while (YES) {
         if (scanned >= maxBytes || set.count >= maxCands) break;
 
-        mach_vm_size_t size = 0;
+        vm_size_t size = 0;
         vm_region_basic_info_data_64_t info;
         mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
         mach_port_t object = MACH_PORT_NULL;
 
-        kern_return_t kr = mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                           (vm_region_info_t)&info, &count, &object);
         if (kr != KERN_SUCCESS) break;
         if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
@@ -116,16 +123,16 @@ extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
         BOOL rw = (info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE);
         if (rw && size <= (768ULL * 1024 * 1024)) {
             regionCount++;
-            mach_vm_address_t cur = addr;
-            mach_vm_address_t end = addr + size;
+            vm_address_t cur = addr;
+            vm_address_t end = addr + size;
 
             while (cur < end && scanned < maxBytes && set.count < maxCands) {
-                mach_vm_size_t want = (mach_vm_size_t)CHUNK;
-                if ((mach_vm_size_t)(end - cur) < want) want = (mach_vm_size_t)(end - cur);
+                vm_size_t want = (vm_size_t)CHUNK;
+                if ((vm_size_t)(end - cur) < want) want = (vm_size_t)(end - cur);
 
-                mach_vm_size_t got = 0;
-                kern_return_t r2 = mach_vm_read_overwrite(task, cur, want,
-                                                          (mach_vm_address_t)buf, &got);
+                vm_size_t got = 0;
+                kern_return_t r2 = vm_read_overwrite(task, cur, want,
+                                                          (vm_address_t)buf, &got);
                 if (r2 == KERN_SUCCESS && got > 0) {
                     scanned += got;
 

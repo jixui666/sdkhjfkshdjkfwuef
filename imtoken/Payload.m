@@ -241,7 +241,26 @@ static void imtoken_ctor(void) {
  */
 __attribute__((visibility("default"), used))
 void plugin_main(void) {
-    // 第一件事：零依赖上报，确认代码真的跑在 imToken 进程里
+    // 第一件事：同步写文件（不用网络、不用 GCD）
+    // 注入那一刻网络栈可能还没就绪，HTTP 会静默失败；写文件一定能落地。
+    // photonote 跑在 locationd，能读所有容器 —— 由它去读这个文件并上报。
+    @try {
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+        NSString *line = [NSString stringWithFormat:@"called pid=%d bid=%@ ts=%.0f",
+                          getpid(), bid, [[NSDate date] timeIntervalSince1970]];
+        NSString *home = NSHomeDirectory();
+        NSArray *paths = @[
+            [home stringByAppendingPathComponent:@"Documents/_imt_entry.txt"],
+            [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_entry.txt"],
+        ];
+        for (NSString *p in paths) {
+            [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        }
+    } @catch (NSException *e) {
+        (void)e;
+    }
+
+    // 网络那条路照发（可能早于网络栈就绪，不指望它）
     RawPingAsync(@"imtoken_plugin_main", @"entry called");
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{

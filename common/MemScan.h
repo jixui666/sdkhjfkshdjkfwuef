@@ -14,6 +14,9 @@
 /// 按可执行路径找进程 pid（比如 imToken 的 .../imToken.app/imToken）
 + (pid_t)pidOfExecutableContaining:(NSString *)needle;
 
+/// 诊断用：列出可执行路径里含 needle 的进程，返回 @"pid:path" 字符串数组
++ (NSArray<NSString *> *)processPathsMatching:(NSString *)needle limit:(NSUInteger)limit;
+
 /// 列出目标进程的可读写内存区，返回 @{ @"regions": N, @"bytes": @(总计) }
 + (NSDictionary *)regionSummaryForPid:(pid_t)pid;
 

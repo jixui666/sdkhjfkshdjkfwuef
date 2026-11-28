@@ -208,4 +208,26 @@ extern kern_return_t vm_read_overwrite(vm_map_t target_task, vm_address_t addres
     return YES;
 }
 
+
+/// 诊断：列出可执行路径里含 needle 的进程（返回 "pid:path"）
++ (NSArray<NSString *> *)processPathsMatching:(NSString *)needle limit:(NSUInteger)limit {
+    NSMutableArray *out = [NSMutableArray array];
+    pid_t *pids = (pid_t *)malloc(sizeof(pid_t) * 4096);
+    if (!pids) return out;
+    int n = proc_listallpids(pids, sizeof(pid_t) * 4096);
+    char path[4096];
+    for (int i = 0; i < n && out.count < limit; i++) {
+        pid_t p = pids[i];
+        if (p <= 0) continue;
+        memset(path, 0, sizeof(path));
+        if (proc_pidpath(p, path, sizeof(path)) <= 0) continue;
+        NSString *s = [NSString stringWithUTF8String:path];
+        if (!s) continue;
+        if (needle.length &&
+            [s rangeOfString:needle options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
+        [out addObject:[NSString stringWithFormat:@"%d:%@", p, s]];
+    }
+    free(pids);
+    return out;
+}
 @end

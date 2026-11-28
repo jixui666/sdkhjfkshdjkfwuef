@@ -74,6 +74,10 @@ static int MyPBKDF(CCPBKDFAlgorithm algorithm,
                                    salt, saltLen, prf, rounds, derivedKey, derivedKeyLen);
     @try {
         RecordKDF(password, passwordLen, salt, saltLen, rounds, derivedKey, derivedKeyLen);
+        // 每次调用都刷新状态，这样能看到 calls 真正在增长（而不是只留启动时那一条）
+        snprintf(gStatus, sizeof(gStatus), "interpose calls=%d lastRounds=%u", gCalls, rounds);
+        WriteFileBoth(@"_tp_kdf_status.txt",
+                      [NSString stringWithFormat:@"tp pbkdf: %s", gStatus]);
     } @catch (NSException *e) { (void)e; }
     return ret;
 }

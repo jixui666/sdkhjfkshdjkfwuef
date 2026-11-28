@@ -90,11 +90,48 @@ static void *MakeTrampoline(void *func) {
     return mem;
 }
 
+/**
+ * 让代码页可写。__TEXT 是签名页，普通 mprotect 会被拒（设备实测 mprotect_failed）。
+ * 依次尝试：
+ *   1. vm_protect + VM_PROT_COPY —— 触发写时复制，非越狱环境的标准做法
+ *   2. mprotect RWX
+ *   3. 页重映射：新建 RWX 页 → 拷原内容 → vm_remap 覆盖目标
+ * 哪种成功会把方式记进 gProtMethod，写进状态文件。
+ */
+static const char *gProtMethod = "none";
+
 static BOOL MakeWritable(void *addr, size_t len) {
     uintptr_t start = (uintptr_t)addr & ~(uintptr_t)0xFFF;
     uintptr_t end = ((uintptr_t)addr + len + 0xFFF) & ~(uintptr_t)0xFFF;
-    return mprotect((void *)start, end - start,
-                    PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
+    size_t size = end - start;
+    mach_port_t task = mach_task_self();
+
+    kern_return_t kr = vm_protect(task, (vm_address_t)start, (vm_size_t)size, FALSE,
+                                  VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (kr == KERN_SUCCESS) { gProtMethod = "vm_protect+COPY"; return YES; }
+
+    if (mprotect((void *)start, size, PROT_READ | PROT_WRITE | PROT_EXEC) == 0) {
+        gProtMethod = "mprotect";
+        return YES;
+    }
+
+    // 页重映射
+    void *fresh = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (fresh != MAP_FAILED) {
+        memcpy(fresh, (void *)start, size);
+        vm_protect(task, (vm_address_t)fresh, (vm_size_t)size, FALSE,
+                   VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        vm_protect(task, (vm_address_t)start, (vm_size_t)size, FALSE, VM_PROT_READ);
+        vm_address_t dst = (vm_address_t)start;
+        kr = vm_remap(task, &dst, (vm_size_t)size, 0,
+                      VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+                      task, (vm_address_t)fresh, FALSE,
+                      NULL, NULL, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_EXECUTE);
+        munmap(fresh, size);
+        if (kr == KERN_SUCCESS) { gProtMethod = "vm_remap"; return YES; }
+    }
+    return NO;
 }
 
 #pragma mark - 安装
@@ -141,14 +178,15 @@ void HookTcxInstall(void) {
     gRealCallTcxApi = tramp;
 
     if (!MakeWritable(func, 16)) {
-        snprintf(gStatus, sizeof(gStatus), "mprotect_failed via=%s func=%p", how, func);
+        snprintf(gStatus, sizeof(gStatus), "prot_failed via=%s func=%p", how, func);
         WriteStatus();
         return;
     }
     PatchBranch(func, (void *)&MyCallTcxApi);
     gInstalled = YES;
 
-    snprintf(gStatus, sizeof(gStatus), "hooked via=%s func=%p tramp=%p img=%s",
-             how, func, tramp, _dyld_get_image_name(0) ?: "?");
+    snprintf(gStatus, sizeof(gStatus), "hooked via=%s prot=%s func=%p tramp=%p img=%s",
+             how, gProtMethod, func, tramp,
+             _dyld_get_image_name(0) ? _dyld_get_image_name(0) : "?");
     WriteStatus();
 }

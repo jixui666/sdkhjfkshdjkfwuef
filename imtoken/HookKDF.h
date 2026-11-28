@@ -21,3 +21,6 @@ BOOL HookKDFInstalled(void);
 
 /// 手动补一次 hook（__interpose 在 dylib 加载时由 dyld 自动处理，这里只做标记）
 void HookKDFInstall(void);
+
+/// 写一次探针文件（记录 pbkdf/hmac 调用次数）
+void HookKDFWriteWitness(void);

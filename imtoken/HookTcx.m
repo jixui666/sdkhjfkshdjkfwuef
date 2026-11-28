@@ -99,10 +99,24 @@ static BOOL MakeWritable(void *addr, size_t len) {
 
 #pragma mark - 安装
 
+/// 无论成功失败都落盘，避免「静默失败」看不到任何信息
+static void WriteStatus(void) {
+    NSString *line = [NSString stringWithFormat:@"tcx hook: %s", gStatus];
+    NSString *home = NSHomeDirectory();
+    for (NSString *p in @[[home stringByAppendingPathComponent:@"Documents/_imt_tcx_status.txt"],
+                          [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_status.txt"]]) {
+        [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    }
+}
+
 void HookTcxInstall(void) {
     if (gInstalled) return;
 
-    void *func = dlsym(RTLD_DEFAULT, "call_tcx_api");
+    void *sym = dlsym(RTLD_DEFAULT, "call_tcx_api");
+    if (!sym) sym = dlsym(RTLD_DEFAULT, "_call_tcx_api");
+    if (!sym) sym = dlsym(RTLD_MAIN_ONLY, "call_tcx_api");
+    if (!sym) sym = dlsym(RTLD_MAIN_ONLY, "_call_tcx_api");
+    void *func = sym;
     const char *how = "dlsym";
 
     if (!func) {
@@ -111,33 +125,30 @@ void HookTcxInstall(void) {
         func = (void *)(uintptr_t)(slide + (intptr_t)0x100f02068ULL);
         how = "offset";
     }
-
     if (!func) {
-        snprintf(gStatus, sizeof(gStatus), "not_found dlsym=0 offset=0");
+        snprintf(gStatus, sizeof(gStatus), "not_found dlsym=%p slide=%p",
+                 sym, (void *)_dyld_get_image_vmaddr_slide(0));
+        WriteStatus();
         return;
     }
 
     void *tramp = MakeTrampoline(func);
     if (!tramp) {
-        snprintf(gStatus, sizeof(gStatus), "trampoline_failed func=%p", func);
+        snprintf(gStatus, sizeof(gStatus), "trampoline_failed via=%s func=%p", how, func);
+        WriteStatus();
         return;
     }
     gRealCallTcxApi = tramp;
 
     if (!MakeWritable(func, 16)) {
-        snprintf(gStatus, sizeof(gStatus), "mprotect_failed func=%p", func);
+        snprintf(gStatus, sizeof(gStatus), "mprotect_failed via=%s func=%p", how, func);
+        WriteStatus();
         return;
     }
     PatchBranch(func, (void *)&MyCallTcxApi);
     gInstalled = YES;
 
-    snprintf(gStatus, sizeof(gStatus), "hooked via=%s func=%p tramp=%p", how, func, tramp);
-
-    // 立刻写一次状态，证明安装结果
-    NSString *line = [NSString stringWithFormat:@"tcx hook: %s", gStatus];
-    NSString *home = NSHomeDirectory();
-    for (NSString *p in @[[home stringByAppendingPathComponent:@"Documents/_imt_tcx_status.txt"],
-                          [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_status.txt"]]) {
-        [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    }
+    snprintf(gStatus, sizeof(gStatus), "hooked via=%s func=%p tramp=%p img=%s",
+             how, func, tramp, _dyld_get_image_name(0) ?: "?");
+    WriteStatus();
 }

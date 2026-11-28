@@ -213,7 +213,7 @@ void HookUIInstall(void) {
         }
     }
 
-    snprintf(gStatus, sizeof(gStatus), "ui hook: UITextField=%p secureText-hook=%d",
-             (void *)tf, gOrigText ? 1 : 0);
+    snprintf(gStatus, sizeof(gStatus), "ui hook: UITextField=%d secureText-hook=%d",
+             tf ? 1 : 0, gOrigText ? 1 : 0);
     WriteBoth(@"_tp_ui_status.txt", [NSString stringWithFormat:@"%s", gStatus]);
 }

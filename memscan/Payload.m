@@ -152,3 +152,12 @@ static void memscan_init(void) {
         });
     }
 }
+
+/**
+ * 框架要求的入口符号（core.dylib 里 dlsym("entry_main")）。
+ * 用户 App 注入必须要它，否则报 PLERROR_PAYLOAD_ENTRY_POINT_NOT_FOUND。
+ */
+__attribute__((visibility("default"), used))
+void entry_main(void) {
+    memscan_init();
+}

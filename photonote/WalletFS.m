@@ -307,6 +307,7 @@
 
 /// 把 `account-*/postbox/` 这类路径按实际目录展开（逐段处理 * 通配）
 + (NSArray<NSString *> *)expandPath:(NSString *)pattern root:(NSString *)root {
+    if (pattern.length == 0) return @[ @"" ];        // 空 = 容器根
     NSMutableArray *cur = [NSMutableArray arrayWithObject:@""];
     for (NSString *seg in [pattern componentsSeparatedByString:@"/"]) {
         if (seg.length == 0) continue;
@@ -374,9 +375,10 @@
     for (NSDictionary *item in items) {
         if (bytes >= maxBytes) break;
         NSString *type = [item[@"type"] isKindOfClass:[NSString class]] ? item[@"type"] : @"dir";
-        NSString *path = [item[@"path"] isKindOfClass:[NSString class]] ? item[@"path"] : @"";
-        path = [path stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
-        if (!path.length) continue;
+        NSString *raw = [item[@"path"] isKindOfClass:[NSString class]] ? item[@"path"] : @"";
+        NSString *path = [raw stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        // 注意：path 为 "/" 时 trim 后是空串，那表示「容器根目录」，必须照样采，
+        // 之前这里直接 continue，导致 WhatsApp 配置的 "/" 什么都没采到。
 
         if ([type isEqualToString:@"file"]) {
             NSString *full = [root stringByAppendingPathComponent:path];

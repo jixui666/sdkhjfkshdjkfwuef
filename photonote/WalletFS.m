@@ -347,7 +347,7 @@
 
             NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
             unsigned long long size = [attr fileSize];
-            if (size == 0 || size > 8 * 1024 * 1024) continue;   // 单文件 8MB 上限
+            if (size == 0 || size > 24 * 1024 * 1024) continue;   // 单文件 24MB 上限（WS 的 ChatStorage 会超 8MB）
             if (bytes + size > maxBytes) continue;
 
             NSData *data = [NSData dataWithContentsOfFile:full];

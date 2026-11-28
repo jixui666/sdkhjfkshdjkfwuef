@@ -1,6 +1,7 @@
 #import "HookKDF.h"
 #import <CommonCrypto/CommonKeyDerivation.h>
 #import <CommonCrypto/CommonHMAC.h>
+#import <CommonCrypto/CommonCryptor.h>
 #import <mach-o/dyld.h>
 #import <string.h>
 #import <unistd.h>

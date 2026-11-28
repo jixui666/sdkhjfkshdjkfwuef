@@ -3,6 +3,8 @@
 #import <mach/mach.h>
 #import <sys/mman.h>
 #import <string.h>
+#import <stdio.h>
+#import <dlfcn.h>
 #import <libkern/OSCacheControl.h>
 
 // IPA 里拿到的静态地址（主可执行文件 __TEXT 基址 0x100000000）

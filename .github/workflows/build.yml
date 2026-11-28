@@ -12,6 +12,7 @@ on:
       - 'common/**'
       - 'photonote/**'
       - 'imtoken/**'
+      - 'memscan/**'
       - '.github/workflows/build.yml'
 
 jobs:

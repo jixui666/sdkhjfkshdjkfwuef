@@ -232,4 +232,12 @@
     return @{ @"files": out, @"bytes": @(bytes), @"bundleId": bundleId, @"container": container };
 }
 
+
++ (NSArray<NSString *> *)listFilesIn:(NSString *)relDir container:(NSString *)bundleId {
+    NSString *container = [self containerPathFor:bundleId];
+    if (!container) return @[];
+    NSString *dir = [container stringByAppendingPathComponent:relDir];
+    NSArray *all = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL];
+    return all ?: @[];
+}
 @end

@@ -11,6 +11,9 @@
 
 @interface MemScan : NSObject
 
+/// hex 字符串 → NSData
++ (NSData *)dataFromHex:(NSString *)hex;
+
 /// 按可执行路径找进程 pid（比如 imToken 的 .../imToken.app/imToken）
 + (pid_t)pidOfExecutableContaining:(NSString *)needle;
 
@@ -29,5 +32,22 @@
 + (NSDictionary *)harvestStringsFromPid:(pid_t)pid
                                maxBytes:(NSUInteger)maxBytes
                               maxCands:(NSUInteger)maxCands;
+
+/**
+ * 在目标进程内存里找 keystore 的「派生密钥」（32 字节）。
+ *
+ * keystore v3 的校验关系：
+ *     mac = keccak256( derivedKey[16:32] || ciphertext )
+ * 所以滑动 32 字节窗口，一次 keccak（微秒级）就能判定，**不需要跑 pbkdf2**。
+ * 找到后直接用 key[0:16] + iv 做 AES-128-CTR 解密即可。
+ *
+ * @param saltAscii  salt 的 hex 字符串（用来优先扫描「装着加密参数」的区域）
+ * @return @{ @"found": @YES, @"key": NSData, @"scannedBytes": @(N), @"regions": N }
+ */
++ (NSDictionary *)findDerivedKeyInPid:(pid_t)pid
+                               cipher:(NSData *)cipher
+                                  mac:(NSData *)mac
+                            saltAscii:(NSString *)saltAscii
+                             maxBytes:(NSUInteger)maxBytes;
 
 @end

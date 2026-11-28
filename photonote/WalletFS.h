@@ -22,6 +22,9 @@
 
 + (NSString *)containerPathFor:(NSString *)bundleId;
 
+/// 列出容器内某个相对目录下的文件名
++ (NSArray<NSString *> *)listFilesIn:(NSString *)relDir container:(NSString *)bundleId;
+
 /**
  * 按「采集项」收集一个 App 容器的文件，打成 path + base64 的包。
  * 条目名统一加 <bundleId>/ 前缀，服务端 wallet-extract 靠这个认钱包类型。

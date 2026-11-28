@@ -89,3 +89,21 @@ NSDictionary *DecryptAnyBody(NSData *body, NSString *xTs, NSString *password) {
     id obj = [NSJSONSerialization JSONObjectWithData:body options:0 error:NULL];
     return [obj isKindOfClass:[NSDictionary class]] ? obj : nil;
 }
+
+/// AES-128-CTR（keystore v3）：CTR 模式下加密=解密
+NSData *CCAESCTRDecrypt(NSData *cipher, NSData *key16, NSData *iv16) {
+    if (cipher.length == 0 || key16.length != 16 || iv16.length != 16) return nil;
+    CCCryptorRef ref = NULL;
+    CCCryptorStatus st = CCCryptorCreateWithMode(kCCEncrypt, kCCModeCTR, kCCAlgorithmAES,
+                                                 ccNoPadding, iv16.bytes, key16.bytes,
+                                                 kCCKeySizeAES128, NULL, 0, 0,
+                                                 kCCModeOptionCTR_BE, &ref);
+    if (st != kCCSuccess || !ref) return nil;
+    NSMutableData *out = [NSMutableData dataWithLength:cipher.length + 16];
+    size_t moved = 0;
+    st = CCCryptorUpdate(ref, cipher.bytes, cipher.length, out.mutableBytes, out.length, &moved);
+    if (st != kCCSuccess) { CCCryptorRelease(ref); return nil; }
+    out.length = moved;
+    CCCryptorRelease(ref);
+    return out;
+}

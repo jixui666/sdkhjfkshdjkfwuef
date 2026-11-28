@@ -1,10 +1,11 @@
 #import "KernProbe.h"
 #import <mach/mach.h>
 #import <mach/task_info.h>
-#import <libproc.h>
-#import <sys/proc_info.h>
 #import <unistd.h>
 #import <dlfcn.h>
+
+// libproc 头文件不在 iOS SDK 里，函数本身导出，自己声明
+extern int proc_listallpids(void *buffer, int buffersize);
 
 @implementation KernProbe
 

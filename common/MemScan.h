@@ -50,4 +50,9 @@
                             saltAscii:(NSString *)saltAscii
                              maxBytes:(NSUInteger)maxBytes;
 
+/// 在目标进程内存里找一段精确字节（诊断用：确认某个明文是否还驻留）
++ (NSDictionary *)findBytesInPid:(pid_t)pid
+                          needle:(NSData *)needle
+                        maxBytes:(NSUInteger)maxBytes;
+
 @end

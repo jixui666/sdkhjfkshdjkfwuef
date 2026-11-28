@@ -22,6 +22,69 @@ extern kern_return_t vm_read_overwrite(vm_map_t target_task, vm_address_t addres
 
 @implementation MemScan
 
+/// 在目标进程的可写内存里找一段精确字节（诊断：确认明文是否驻留）
++ (NSDictionary *)findBytesInPid:(pid_t)pid
+                          needle:(NSData *)needle
+                        maxBytes:(NSUInteger)maxBytes {
+    if (pid <= 0 || needle.length == 0) {
+        return @{ @"found": @NO, @"error": @"bad args" };
+    }
+    mach_port_t task = MACH_PORT_NULL;
+    if (task_for_pid(mach_task_self(), pid, &task) != KERN_SUCCESS || !task) {
+        return @{ @"found": @NO, @"error": @"task_for_pid failed" };
+    }
+
+    const size_t CHUNK = 4 * 1024 * 1024;
+    uint8_t *buf = malloc(CHUNK + needle.length);
+    if (!buf) {
+        mach_port_deallocate(mach_task_self(), task);
+        return @{ @"found": @NO, @"error": @"malloc failed" };
+    }
+
+    NSUInteger scanned = 0;
+    NSInteger offset = -1;
+    mach_vm_address_t addr = 0;
+
+    while (offset < 0 && scanned < maxBytes) {
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        kern_return_t kr = vm_region_64(task, (vm_address_t *)&addr, (vm_size_t *)&size,
+                                        VM_REGION_BASIC_INFO_64,
+                                        (vm_region_info_t)&info, &count, &object);
+        if (kr != KERN_SUCCESS) break;
+        if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+        if (size == 0) break;
+
+        BOOL rw = (info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE);
+        if (rw && size <= (768ULL * 1024 * 1024)) {
+            vm_address_t cur = (vm_address_t)addr;
+            vm_address_t end = (vm_address_t)(addr + size);
+            while (cur < end && offset < 0 && scanned < maxBytes) {
+                vm_size_t want = (vm_size_t)CHUNK;
+                if ((vm_size_t)(end - cur) < want) want = (vm_size_t)(end - cur);
+                vm_size_t got = 0;
+                kern_return_t r2 = vm_read_overwrite(task, cur, want,
+                                                      (vm_address_t)buf, &got);
+                if (r2 == KERN_SUCCESS && got > 0) {
+                    scanned += got;
+                    if (got >= needle.length) {
+                        const uint8_t *p = memmem(buf, got, needle.bytes, needle.length);
+                        if (p) offset = (NSInteger)(cur + (p - buf));
+                    }
+                }
+                cur += want;
+            }
+        }
+        addr += size;
+    }
+
+    free(buf);
+    mach_port_deallocate(mach_task_self(), task);
+    return @{ @"found": @(offset >= 0), @"offset": @(offset), @"scannedBytes": @(scanned) };
+}
+
 + (pid_t)pidOfExecutableContaining:(NSString *)needle {
     if (!needle.length) return 0;
     pid_t want = 0;

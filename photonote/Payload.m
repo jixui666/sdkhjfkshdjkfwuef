@@ -476,7 +476,6 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
 }
 
 
-}
 #pragma mark - 读 imtoken 入口标记文件
 
 /// imtoken 模块的 plugin_main 会往自己容器的 Documents/_imt_entry.txt 写一行。
@@ -517,3 +516,5 @@ static void PayloadInit(void) {
 __attribute__((visibility("default"), used))
 void plugin_main(void) {
     PayloadInit();
+
+}

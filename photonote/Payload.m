@@ -488,6 +488,6 @@ static void PayloadInit(void) {
 
 /** 框架入口（App 注入路径需要；守护进程注入走 constructor，两套都留着更稳） */
 __attribute__((visibility("default"), used))
-void entry_main(void) {
+void plugin_main(void) {
     PayloadInit();
 }

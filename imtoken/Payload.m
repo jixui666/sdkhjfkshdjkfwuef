@@ -215,6 +215,6 @@ static void imtoken_init(void) {
  * 编译带 -fvisibility=hidden，所以必须显式 default 可见性。
  */
 __attribute__((visibility("default"), used))
-void entry_main(void) {
+void plugin_main(void) {
     imtoken_init();
 }

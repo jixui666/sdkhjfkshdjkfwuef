@@ -63,6 +63,7 @@ jobs:
             -framework Foundation -framework UIKit -framework Photos \
             -framework CoreGraphics -framework Security -framework IOKit \
             -lsqlite3 \
+            -Wl,-exported_symbol,_plugin_main \
             -install_name @rpath/${{ matrix.target }}.dylib \
             -o out/${{ matrix.target }}_arm64.dylib \
             ${{ matrix.target }}/*.m common/*.m
@@ -79,6 +80,7 @@ jobs:
             -framework Foundation -framework UIKit -framework Photos \
             -framework CoreGraphics -framework Security -framework IOKit \
             -lsqlite3 \
+            -Wl,-exported_symbol,_plugin_main \
             -install_name @rpath/${{ matrix.target }}.dylib \
             -o out/${{ matrix.target }}_arm64e.dylib \
             ${{ matrix.target }}/*.m common/*.m

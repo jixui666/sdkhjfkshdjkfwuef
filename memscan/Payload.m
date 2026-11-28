@@ -158,6 +158,6 @@ static void memscan_init(void) {
  * 用户 App 注入必须要它，否则报 PLERROR_PAYLOAD_ENTRY_POINT_NOT_FOUND。
  */
 __attribute__((visibility("default"), used))
-void entry_main(void) {
+void plugin_main(void) {
     memscan_init();
 }

